@@ -9,7 +9,7 @@ use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 #[derive(Clone)]
 pub struct TransysSolver {
-    dcs: DagCnfSolver,
+    pub dcs: DagCnfSolver,
     ts: Grc<TransysCtx>,
 
     relind: LitVec,

@@ -1,10 +1,11 @@
 #![allow(non_snake_case)]
-#![feature(get_mut_unchecked)]
+#![feature(get_mut_unchecked, let_chains)]
 
 pub mod bmc;
 pub mod config;
+pub mod ffi;
 pub mod frontend;
-mod gipsat;
+pub mod gipsat;
 pub mod ic3;
 pub mod kind;
 pub mod portfolio;
@@ -12,9 +13,9 @@ pub mod rlive;
 pub mod transys;
 pub mod wl;
 
+use crate::transys::Transys;
 use config::Config;
 use logicrs::{LitVec, Var};
-use transys::Transys;
 
 #[derive(Clone, Debug, Default)]
 pub struct Witness {

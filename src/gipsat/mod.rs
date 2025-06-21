@@ -1,11 +1,12 @@
+
 mod analyze;
 mod cdb;
 mod domain;
 mod propagate;
 mod search;
 mod simplify;
-mod statistic;
-mod ts;
+pub mod statistic;
+pub mod ts;
 mod vsids;
 
 use analyze::Analyze;
