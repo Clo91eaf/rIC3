@@ -5,6 +5,10 @@
 [![Crates.io](https://img.shields.io/crates/v/rIC3.svg?logo=rust)](https://crates.io/crates/rIC3)
 [![Docker](https://img.shields.io/docker/v/gipsyh/ric3?label=Docker&logo=docker)](https://hub.docker.com/r/gipsyh/ric3)
 
+### LLM-Assisted Model Checking
+rIC3 supports LLM-accelerated model checking through invariant generation. For details, see the paper [CIll: CTI-Guided Invariant Generation via LLMs for Model Checking](https://arxiv.org/abs/2602.23389).
+The prompt and VCD inspection MCP tools are located under the `tools` directory. Yosys and the [Yosys-Slang](https://github.com/gipsyh/yosys-slang/tree/ric3) parser are also required. For a concrete example, see https://github.com/gipsyh/cill-exp
+
 ### HWMCC
 rIC3 achieved first place in both the bit-level track and the word-level bit-vector track at the 2024 and 2025 Hardware Model Checking Competition ([HWMCC](https://hwmcc.github.io)).
 
@@ -15,6 +19,7 @@ To view the submission for HWMCC'24, please checkout the `HWMCC24` branch or dow
 - [CAV2025] [Deeply Optimizing the SAT Solver for the IC3 Algorithm](https://doi.org/10.1007/978-3-031-98668-0_12)
 - [DAC2024] [Predicting Lemmas in Generalization of IC3](http://doi.org/10.1145/3649329.3655970)
 - [arXiv] [Extended CTG Generalization and Dynamic Adjustment of Generalization Strategies in IC3](https://arxiv.org/abs/2501.02480)
+- [arXiv] [CIll: CTI-Guided Invariant Generation via LLMs for Model Checking](https://arxiv.org/abs/2602.23389)
 
 ### rIC3 Tool Flow
 <p align="center">
