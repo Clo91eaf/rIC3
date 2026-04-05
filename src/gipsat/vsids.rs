@@ -155,6 +155,13 @@ impl Activity {
         }
     }
 
+    pub fn boost(&mut self, var: Var, factor: f64) {
+        self.activity[var] *= factor;
+        self.check(var);
+        let act = unsafe { &mut *(self as *mut Activity) };
+        self.bucket_heap.up(var, act);
+    }
+
     const DECAY: f64 = 0.95;
 
     #[inline]

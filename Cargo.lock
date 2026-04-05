@@ -1491,6 +1491,7 @@ dependencies = [
  "satif-cadical",
  "satif-kissat",
  "serde",
+ "serde_json",
  "sha2",
  "smtif-bitwuzla",
  "strum 0.28.0",

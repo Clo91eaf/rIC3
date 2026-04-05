@@ -119,6 +119,16 @@ impl DagCnfSolver {
         self.rng = SmallRng::seed_from_u64(rseed);
     }
 
+    pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64) {
+        for var_idx in 0..self.num_var() {
+            let var = Var::new(var_idx);
+            let weight = hint.activity_weight(var, alpha);
+            if weight != 1.0 {
+                self.vsids.activity.boost(var, weight);
+            }
+        }
+    }
+
     fn simplify_clause(&mut self, clause: &[Lit]) -> Option<LitVec> {
         assert!(self.highest_level() == 0);
         let mut clause = logicrs::LitVec::from(clause);

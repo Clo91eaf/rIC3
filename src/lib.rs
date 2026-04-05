@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 pub mod bmc;
+pub mod structhint;
 pub mod config;
 pub mod frontend;
 pub mod gipsat;
