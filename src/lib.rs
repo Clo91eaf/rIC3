@@ -208,12 +208,13 @@ pub fn create_bl_engine(
     cfg: EngineConfig,
     ts: Transys,
     sym: logicrs::VarSymbols,
+    struct_hint: Option<structhint::StructHint>,
 ) -> Box<dyn Engine> {
     let num_bad = ts.bad.len();
     match cfg {
-        EngineConfig::IC3(cfg) => Box::new(ic3::IC3::new(cfg, ts, sym)),
+        EngineConfig::IC3(cfg) => Box::new(ic3::IC3::new(cfg, ts, sym, struct_hint)),
         EngineConfig::Kind(cfg) => Box::new(kind::Kind::new(cfg, ts)),
-        EngineConfig::BMC(cfg) => Box::new(bmc::BMC::new(cfg, ts)),
+        EngineConfig::BMC(cfg) => Box::new(bmc::BMC::new(cfg, ts, struct_hint)),
         EngineConfig::MultiProp(cfg) => Box::new(mp::MultiProp::new(cfg, ts)),
         EngineConfig::Rlive(cfg) => Box::new(rlive::Rlive::new(cfg, ts)),
         EngineConfig::Polynexus(cfg) => {

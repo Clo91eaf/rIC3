@@ -43,7 +43,7 @@ impl CIll {
                             cfg.inn = true;
                             cfg.prop = Some(i);
                             let mut ic3 =
-                                IC3::new(cfg.clone(), self.ts.clone(), VarSymbols::default());
+                                IC3::new(cfg.clone(), self.ts.clone(), VarSymbols::default(), None);
                             let res = ic3.check();
                             let inv = ic3.invariant();
                             (matches!(res, McResult::Safe), inv)

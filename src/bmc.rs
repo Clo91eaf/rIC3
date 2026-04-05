@@ -53,10 +53,12 @@ pub struct BMC {
     step: usize,
     rng: StdRng,
     tracer: Tracer,
+    #[allow(dead_code)]
+    struct_hint: Option<crate::structhint::StructHint>,
 }
 
 impl BMC {
-    pub fn new(cfg: BMCConfig, mut ts: Transys) -> Self {
+    pub fn new(cfg: BMCConfig, mut ts: Transys, struct_hint: Option<crate::structhint::StructHint>) -> Self {
         let ots = ts.clone();
         ts.compress_bads();
         let mut rng = StdRng::seed_from_u64(cfg.rseed);
@@ -80,6 +82,9 @@ impl BMC {
         } else {
             cfg.step as usize
         };
+        if struct_hint.is_some() {
+            info!("StructHint available for BMC (phase injection not yet implemented for external solvers)");
+        }
         Self {
             ots,
             uts,
@@ -90,6 +95,7 @@ impl BMC {
             rst,
             rng,
             tracer: Tracer::new(),
+            struct_hint,
         }
     }
 

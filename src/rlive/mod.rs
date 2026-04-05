@@ -89,7 +89,7 @@ impl Rlive {
             assert!(l.var() != self.base_var);
             rts.init.insert(l.var(), Lit::constant(l.polarity()));
         }
-        let mut ic3 = IC3::new(self.rcfg.clone(), rts, VarSymbols::new());
+        let mut ic3 = IC3::new(self.rcfg.clone(), rts, VarSymbols::new(), None);
         let prev_level = log::max_level();
         log::set_max_level(LevelFilter::Warn);
         let res = ic3.check();
@@ -170,7 +170,7 @@ impl Engine for Rlive {
         loop {
             let mut ts = self.ts.clone();
             ts.bad = take(&mut ts.justice);
-            let mut ic3 = IC3::new(self.rcfg.clone(), ts, VarSymbols::new());
+            let mut ic3 = IC3::new(self.rcfg.clone(), ts, VarSymbols::new(), None);
             let prev_level = log::max_level();
             log::set_max_level(LevelFilter::Warn);
             let res = ic3.check();

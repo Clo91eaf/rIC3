@@ -36,6 +36,10 @@ pub struct CheckConfig {
     /// interrupt statistic
     #[arg(long, default_value_t = false)]
     pub interrupt_statistic: bool,
+
+    /// path to StructHint JSON metadata file for structure-aware solving
+    #[arg(long = "struct-hint")]
+    pub struct_hint: Option<PathBuf>,
 }
 
 fn report_res(chk: &CheckConfig, res: McResult) {
@@ -67,6 +71,14 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
         unsafe { env::set_var("RUST_LOG", "info") };
     }
     logger_init();
+    let struct_hint = chk.struct_hint.as_ref().and_then(|p| {
+        let hint = rIC3::structhint::StructHint::load(p);
+        match &hint {
+            Some(h) => info!("loaded StructHint from {}: {} var hints", p.display(), h.len()),
+            None => log::warn!("failed to load StructHint from {}", p.display()),
+        }
+        hint
+    });
     chk.model = chk.model.canonicalize()?;
     info!("the model to be checked: {}", chk.model.display());
     let mut tmp_cert = None;
@@ -102,7 +114,7 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
     } else {
         let (ts, symbols) = frontend.ts();
         info!("origin ts has {}", ts.statistic());
-        create_bl_engine(cfg.clone(), ts, symbols)
+        create_bl_engine(cfg.clone(), ts, symbols, struct_hint.clone())
     };
     engine.add_tracer(log_tracer);
     interrupt_statistic(&chk, engine.as_mut());

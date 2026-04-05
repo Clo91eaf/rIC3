@@ -126,7 +126,7 @@ impl CIll {
                         cfg.time_limit = Some(15);
                         cfg.step = step;
                     }
-                    let mut bmc = BMC::new(cfg, self.ts.clone());
+                    let mut bmc = BMC::new(cfg, self.ts.clone(), None);
                     let res = bmc.check();
                     (res, bmc)
                 })

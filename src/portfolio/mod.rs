@@ -278,7 +278,7 @@ impl Engine for LightPortfolio {
             .ecfgs
             .clone()
             .into_par_iter()
-            .map(|ecfg| create_bl_engine(ecfg, self.ts.clone(), self.sym.clone()))
+            .map(|ecfg| create_bl_engine(ecfg, self.ts.clone(), self.sym.clone(), None))
             .collect();
         let ctrls: Vec<_> = engines.iter().map(|e| e.get_ctrl()).collect();
         let (tx, rx) = mpsc::channel();

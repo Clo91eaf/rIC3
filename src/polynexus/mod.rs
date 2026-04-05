@@ -178,7 +178,7 @@ impl PolyNexus {
         tx: mpsc::Sender<WorkerMsg>,
     ) -> (JoinHandle<()>, EngineCtrl) {
         // Create IC3 on the main thread so we can grab its ctrl.
-        let mut ic3 = IC3::new(cfg, ts, VarSymbols::default());
+        let mut ic3 = IC3::new(cfg, ts, VarSymbols::default(), None);
         let ctrl = ic3.get_ctrl();
         ic3.add_tracer(Box::new(PropTracerBridge {
             prop,

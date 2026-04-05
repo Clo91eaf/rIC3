@@ -162,6 +162,7 @@ pub struct IC3 {
     filog: IntervalLogger,
     tracer: Tracer,
     ctrl: EngineCtrl,
+    struct_hint: Option<crate::structhint::StructHint>,
 }
 
 impl IC3 {
@@ -176,7 +177,10 @@ impl IC3 {
         if let Some(predprop) = self.predprop.as_mut() {
             predprop.extend(self.frame.inf.iter().map(|l| l.as_litvec()));
         }
-        let solver = self.inf_solver.clone();
+        let mut solver = self.inf_solver.clone();
+        if let Some(ref hint) = self.struct_hint {
+            solver.dcs.apply_struct_hints(hint, 2.0);
+        }
         self.solvers.push(solver);
         self.frame.push(Frame::new());
         if self.level() == 0 {
@@ -201,7 +205,7 @@ impl IC3 {
 }
 
 impl IC3 {
-    pub fn new(cfg: IC3Config, mut ts: Transys, symbols: VarSymbols) -> Self {
+    pub fn new(cfg: IC3Config, mut ts: Transys, symbols: VarSymbols, struct_hint: Option<crate::structhint::StructHint>) -> Self {
         cfg.validate();
         let ots = ts.clone();
         if let Some(prop) = cfg.prop {
@@ -231,7 +235,10 @@ impl IC3 {
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
         let frame = Frames::new(&tsctx);
-        let inf_solver = TransysSolver::new(&tsctx);
+        let mut inf_solver = TransysSolver::new(&tsctx);
+        if let Some(ref hint) = struct_hint {
+            inf_solver.dcs.apply_struct_hints(hint, 2.0);
+        }
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
         Self {
@@ -255,6 +262,7 @@ impl IC3 {
             filog: Default::default(),
             tracer: Tracer::new(),
             ctrl: EngineCtrl::default(),
+            struct_hint,
         }
     }
 
