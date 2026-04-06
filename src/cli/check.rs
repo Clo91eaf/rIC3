@@ -127,7 +127,7 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
         McResult::Unsafe(_) => {
             certificate(&chk, frontend.as_mut(), engine.as_mut(), false);
         }
-        McResult::Unknown(_) => todo!(),
+        McResult::Unknown(_) => {},
     }
     report_res(&chk, res);
     if chk.certify {

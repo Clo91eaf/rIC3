@@ -239,6 +239,15 @@ impl Vsids {
     pub fn decay(&mut self) {
         self.activity.decay();
     }
+
+    /// Boost activity for a variable and ensure bucket array is properly sized.
+    /// Used by StructHint to give control variables a head start.
+    pub fn boost(&mut self, var: Var, factor: f64) {
+        self.activity.boost(var, factor);
+        self.bucket
+            .buckets
+            .reserve(self.activity.bucket_table[self.activity.bucket_table.len() - 1] as usize + 1);
+    }
 }
 
 impl Default for Vsids {

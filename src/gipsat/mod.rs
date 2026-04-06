@@ -124,7 +124,7 @@ impl DagCnfSolver {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
             if weight != 1.0 {
-                self.vsids.activity.boost(var, weight);
+                self.vsids.boost(var, weight);
             }
         }
     }
