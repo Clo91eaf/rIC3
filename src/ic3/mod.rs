@@ -179,7 +179,11 @@ impl IC3 {
         }
         let mut solver = self.inf_solver.clone();
         if let Some(ref hint) = self.struct_hint {
-            solver.dcs.apply_struct_hints(hint, 2.0);
+            let alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2.0);
+            solver.dcs.apply_struct_hints(hint, alpha);
         }
         self.solvers.push(solver);
         self.frame.push(Frame::new());
@@ -237,7 +241,11 @@ impl IC3 {
         let frame = Frames::new(&tsctx);
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
-            inf_solver.dcs.apply_struct_hints(hint, 2.0);
+            let alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2.0);
+            inf_solver.dcs.apply_struct_hints(hint, alpha);
         }
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
