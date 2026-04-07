@@ -72,12 +72,14 @@ impl TsLift {
                 break;
             }
             let olen = states.len();
-            states = self
-                .slv
-                .minimal_premise(&inputs_flatten, &states, &cls)
-                .unwrap();
-            if states.len() == olen {
-                break;
+            match self.slv.minimal_premise(&inputs_flatten, &states, &cls) {
+                Some(new_states) => {
+                    if new_states.len() == olen {
+                        break;
+                    }
+                    states = new_states;
+                }
+                None => break, // Can't minimize further, return current states
             }
         }
         self.slv.unset_domain();
