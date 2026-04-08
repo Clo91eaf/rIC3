@@ -163,6 +163,10 @@ pub struct IC3 {
     tracer: Tracer,
     ctrl: EngineCtrl,
     struct_hint: Option<crate::structhint::StructHint>,
+    adaptive_alpha: f64,
+    adaptive_alpha_initial: f64,
+    adaptive_last_progress_level: usize,
+    adaptive_stall_threshold: usize,
 }
 
 impl IC3 {
@@ -177,13 +181,18 @@ impl IC3 {
         if let Some(predprop) = self.predprop.as_mut() {
             predprop.extend(self.frame.inf.iter().map(|l| l.as_litvec()));
         }
+        // Adaptive alpha: decay when IC3 stalls (no convergence for several frames)
+        let levels_since_progress = nl.saturating_sub(self.adaptive_last_progress_level);
+        if levels_since_progress > self.adaptive_stall_threshold && self.adaptive_alpha > 1.05 {
+            let old_alpha = self.adaptive_alpha;
+            // Halve the distance to 1.0
+            self.adaptive_alpha = 1.0 + (self.adaptive_alpha - 1.0) * 0.5;
+            info!("Adaptive alpha: decayed from {:.3} to {:.3} (stalled for {} levels)",
+                  old_alpha, self.adaptive_alpha, levels_since_progress);
+        }
         let mut solver = self.inf_solver.clone();
         if let Some(ref hint) = self.struct_hint {
-            let alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(2.0);
-            solver.dcs.apply_struct_hints(hint, alpha);
+            solver.dcs.apply_struct_hints(hint, self.adaptive_alpha);
         }
         self.solvers.push(solver);
         self.frame.push(Frame::new());
@@ -239,13 +248,21 @@ impl IC3 {
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
         let frame = Frames::new(&tsctx);
+        let initial_alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2.0);
+        let adaptive_enabled = std::env::var("STRUCTHINT_ADAPTIVE")
+            .ok()
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(false);
+        let stall_threshold: usize = std::env::var("STRUCTHINT_STALL_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5);
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
-            let alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(2.0);
-            inf_solver.dcs.apply_struct_hints(hint, alpha);
+            inf_solver.dcs.apply_struct_hints(hint, initial_alpha);
         }
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
@@ -271,6 +288,10 @@ impl IC3 {
             tracer: Tracer::new(),
             ctrl: EngineCtrl::default(),
             struct_hint,
+            adaptive_alpha: initial_alpha,
+            adaptive_alpha_initial: initial_alpha,
+            adaptive_last_progress_level: 0,
+            adaptive_stall_threshold: if adaptive_enabled { stall_threshold } else { usize::MAX },
         }
     }
 
@@ -335,6 +356,10 @@ impl Engine for IC3 {
             let start = Instant::now();
             let propagate = self.propagate(None);
             self.statistic.overall_propagate_time += start.elapsed();
+            // Track progress for adaptive alpha: propagation moving lemmas = progress
+            if propagate || self.frame.early > self.adaptive_last_progress_level {
+                self.adaptive_last_progress_level = self.level();
+            }
             if propagate {
                 self.tracer.trace_state(None, McResult::Safe);
                 return McResult::Safe;
