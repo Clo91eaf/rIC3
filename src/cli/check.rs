@@ -72,9 +72,11 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
     }
     logger_init();
     let struct_hint = chk.struct_hint.as_ref().and_then(|p| {
+        let load_start = std::time::Instant::now();
         let hint = rIC3::structhint::StructHint::load(p);
+        let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
         match &hint {
-            Some(h) => info!("loaded StructHint from {}: {} var hints", p.display(), h.len()),
+            Some(h) => info!("loaded StructHint from {}: {} var hints in {:.3}ms", p.display(), h.len(), load_ms),
             None => log::warn!("failed to load StructHint from {}", p.display()),
         }
         hint
