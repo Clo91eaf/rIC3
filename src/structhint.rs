@@ -81,4 +81,30 @@ impl StructHint {
     pub fn is_empty(&self) -> bool {
         self.hints.is_empty()
     }
+
+    /// Remap hint variable IDs through a forward variable map.
+    /// Used after preprocessing (COI, SCORR, rearrangement) to align
+    /// original AIGER variable IDs with the solver's internal IDs.
+    pub fn remap(&self, forward: impl Fn(Var) -> Option<Var>) -> Self {
+        let mut new_hints = HashMap::new();
+        let mut mapped = 0u32;
+        let mut dropped = 0u32;
+        for (&old_id, hint) in &self.hints {
+            let old_var = Var::new(old_id as usize);
+            if let Some(new_var) = forward(old_var) {
+                new_hints.insert(*new_var, hint.clone());
+                mapped += 1;
+            } else {
+                dropped += 1;
+            }
+        }
+        log::info!(
+            "StructHint remap: {} mapped, {} dropped (eliminated by preprocessing)",
+            mapped, dropped
+        );
+        StructHint {
+            source: self.source.clone(),
+            hints: new_hints,
+        }
+    }
 }

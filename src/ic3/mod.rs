@@ -260,6 +260,10 @@ impl IC3 {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(5);
+        // Remap hint variable IDs through preprocessing's forward map
+        let struct_hint = struct_hint.map(|hint| {
+            hint.remap(|v| rst.try_forward(logicrs::Lit::new(v, false)).map(|l| l.var()))
+        });
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
             inf_solver.dcs.apply_struct_hints(hint, initial_alpha);
