@@ -1,9 +1,9 @@
 use crate::{
-    Engine, McProof, McResult, McWitness,
+    Engine, McResult, WlCex, WlEngine, WlProof,
     config::EngineConfigBase,
     impl_config_deref,
     tracer::{Tracer, TracerIf},
-    wltransys::{WlTransys, certify::WlProof, unroll::WlTransysUnroll},
+    wltransys::{WlTransys, unroll::WlTransysUnroll},
 };
 use clap::Args;
 use giputils::hash::GHashMap;
@@ -84,8 +84,8 @@ impl Engine for WlKind {
                 self.load_bad_to(k - 1);
                 let bad_at_k = self.uts.next(&self.uts.ts.bad[0], k);
                 if !self.solver.solve(&[bad_at_k]) {
-                    self.tracer.trace_state(None, crate::McResult::Safe);
-                    return McResult::Safe;
+                    self.tracer.trace_state(None, crate::McResult::Satisfied);
+                    return McResult::Satisfied;
                 }
             }
 
@@ -97,8 +97,8 @@ impl Engine for WlKind {
             assump.push(bad_at_k);
 
             if self.solver.solve(&assump) {
-                self.tracer.trace_state(None, crate::McResult::Unsafe(k));
-                return McResult::Unsafe(k);
+                self.tracer.trace_state(None, crate::McResult::Violated(k));
+                return McResult::Violated(k);
             }
             self.tracer
                 .trace_state(None, crate::McResult::Unknown(Some(k)));
@@ -110,9 +110,11 @@ impl Engine for WlKind {
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
         self.tracer.add_tracer(tracer);
     }
+}
 
-    fn witness(&mut self) -> McWitness {
-        let mut witness = self.uts.witness(&mut self.solver);
+impl WlEngine for WlKind {
+    fn cex(&mut self) -> WlCex {
+        let mut cex = self.uts.cex(&mut self.solver);
         let mut cache = GHashMap::new();
         let mut ilmap = GHashMap::new();
         for i in self.owts.input.iter().chain(self.owts.latch.iter()) {
@@ -124,14 +126,14 @@ impl Engine for WlKind {
             .iter()
             .map(|b| b.cached_apply(&|t| ilmap.get(t).cloned(), &mut cache))
             .collect();
-        witness.bad_id = bads
+        cex.bad_id = bads
             .into_iter()
             .position(|b| self.solver.sat_value(&b).is_some_and(|v| v.bool()))
             .unwrap();
-        McWitness::Wl(witness)
+        cex
     }
 
-    fn proof(&mut self) -> McProof {
+    fn proof(&mut self) -> WlProof {
         let mut proof = self.uts.ts.clone();
         let mut up = WlTransysUnroll::new(proof.clone());
         up.enable_new_next_latch();
@@ -192,6 +194,6 @@ impl Engine for WlKind {
         }
         bads.push(!&aux_vars[0]);
         proof.bad = vec![Term::new_op_fold(op::Or, bads)];
-        McProof::Wl(WlProof { proof })
+        WlProof { proof }
     }
 }

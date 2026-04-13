@@ -1,5 +1,5 @@
 use crate::{
-    Engine, McResult, McWitness,
+    Engine, McResult, WlCex, WlEngine,
     config::EngineConfigBase,
     impl_config_deref,
     tracer::{Tracer, TracerIf},
@@ -64,8 +64,8 @@ impl Engine for WlBMC {
             self.load_trans_to(k);
             let assump = self.uts.next(&self.uts.ts.bad[0], k);
             if self.solver.solve(&[assump]) {
-                self.tracer.trace_state(None, crate::McResult::Unsafe(k));
-                return McResult::Unsafe(k);
+                self.tracer.trace_state(None, crate::McResult::Violated(k));
+                return McResult::Violated(k);
             }
             self.tracer
                 .trace_state(None, crate::McResult::Unknown(Some(k)));
@@ -77,9 +77,11 @@ impl Engine for WlBMC {
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
         self.tracer.add_tracer(tracer);
     }
+}
 
-    fn witness(&mut self) -> McWitness {
-        let mut witness = self.uts.witness(&mut self.solver);
+impl WlEngine for WlBMC {
+    fn cex(&mut self) -> WlCex {
+        let mut cex = self.uts.cex(&mut self.solver);
         let mut cache = GHashMap::new();
         let mut ilmap = GHashMap::new();
         for i in self.owts.input.iter().chain(self.owts.latch.iter()) {
@@ -91,10 +93,10 @@ impl Engine for WlBMC {
             .iter()
             .map(|b| b.cached_apply(&|t| ilmap.get(t).cloned(), &mut cache))
             .collect();
-        witness.bad_id = bads
+        cex.bad_id = bads
             .into_iter()
             .position(|b| self.solver.sat_value(&b).is_some_and(|v| v.bool()))
             .unwrap();
-        McWitness::Wl(witness)
+        cex
     }
 }

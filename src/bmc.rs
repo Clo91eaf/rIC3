@@ -1,5 +1,5 @@
 use crate::{
-    Engine, McResult, McWitness,
+    BlCex, BlEngine, Engine, McResult,
     config::{EngineConfig, EngineConfigBase, PreprocConfig},
     impl_config_deref,
     tracer::{Tracer, TracerIf},
@@ -149,8 +149,8 @@ impl Engine for BMC {
                 self.solver.solve(&assump)
             };
             if r {
-                self.tracer.trace_state(None, crate::McResult::Unsafe(k));
-                return McResult::Unsafe(k);
+                self.tracer.trace_state(None, crate::McResult::Violated(k));
+                return McResult::Violated(k);
             }
             self.tracer
                 .trace_state(None, crate::McResult::Unknown(Some(k)));
@@ -165,14 +165,16 @@ impl Engine for BMC {
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
         self.tracer.add_tracer(tracer);
     }
+}
 
-    fn witness(&mut self) -> McWitness {
-        let mut wit = self.uts.witness(self.solver.as_ref());
-        wit = wit.map(|l| self.rst.restore(l));
-        for s in wit.state.iter_mut() {
+impl BlEngine for BMC {
+    fn cex(&mut self) -> BlCex {
+        let mut cex = self.uts.cex(self.solver.as_ref());
+        cex = cex.map(|l| self.rst.restore(l));
+        for s in cex.state.iter_mut() {
             *s = self.rst.restore_eq_state(s);
         }
-        wit.exact_state(&self.ots, true);
-        McWitness::Bl(wit)
+        cex.exact_state(&self.ots, true);
+        cex
     }
 }

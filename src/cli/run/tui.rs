@@ -3,7 +3,7 @@ use crate::cli::{
     yosys::Yosys,
 };
 use rIC3::{
-    Engine, McResult, MpEngine, MpMcResult,
+    Engine, McBlCertificate, McResult, MpEngine, MpMcResult,
     frontend::Frontend,
     polynexus::{PolyNexus, PolyNexusConfig},
     tracer::{state_channel_tracer, witness_channel_tracer},
@@ -26,8 +26,8 @@ use std::{
 impl PropMcState {
     fn color(&self) -> Color {
         match self.prop.res {
-            McResult::Safe => Color::Green,
-            McResult::Unsafe(_) => Color::Red,
+            McResult::Satisfied => Color::Green,
+            McResult::Violated(_) => Color::Red,
             McResult::Unknown(_) => match self.state {
                 McStatus::Solving => Color::Yellow,
                 McStatus::Wait => Color::DarkGray,
@@ -38,15 +38,15 @@ impl PropMcState {
 
     fn as_str(&self) -> &str {
         match self.prop.res {
-            McResult::Safe => "Safe",
-            McResult::Unsafe(_) => "Unsafe",
+            McResult::Satisfied => "Satisfied",
+            McResult::Violated(_) => "Violated",
             McResult::Unknown(_) => self.state.as_ref(),
         }
     }
 
     fn cells(&'_ self) -> Vec<Cell<'_>> {
         let bound = match self.prop.res {
-            McResult::Unsafe(b) => format!("{b}"),
+            McResult::Violated(b) => format!("{b}"),
             McResult::Unknown(Some(b)) => format!("{b}"),
             _ => "-".to_string(),
         };
@@ -160,11 +160,12 @@ impl Run {
                 let prop = &mut self.mc[prop_id];
                 prop.prop.res = result;
             }
-            while let Ok(wit) = task.wit_trx.try_recv() {
-                let prop_id = wit.prop_id();
-                let wit = self.btorfe.unsafe_certificate(wit);
+            while let Ok(cex) = task.wit_trx.try_recv() {
+                let cex = cex.into_violated().unwrap();
+                let prop_id = cex.bad_id;
+                let cex = self.btorfe.bl_certificate(McBlCertificate::Violated(cex));
                 let wit_path = self.ric3_proj.path(format!("res/p{prop_id}.wit"));
-                fs::write(&wit_path, format!("{wit}")).unwrap();
+                fs::write(&wit_path, format!("{cex}")).unwrap();
                 Yosys::btor_wit_to_vcd(
                     self.ric3_proj.path("dut"),
                     wit_path,

@@ -1,10 +1,13 @@
-use crate::config::{EngineConfig, EngineConfigBase};
+use crate::config::{EngineConfig, EngineConfigBase, PreprocConfig};
 use crate::frontend::Frontend;
 use crate::tracer::{
     PipeStateTracerRecv, PipeTracerRecv, PipeTracerSend, Tracer, TracerIf, pipe_tracer,
 };
 use crate::transys::Transys;
-use crate::{Engine, EngineCtrl, McResult, create_bl_engine, impl_config_deref};
+use crate::transys::certify::Restore;
+use crate::{
+    BlEngine, Engine, EngineCtrl, McBlCertificate, McResult, create_bl_engine, impl_config_deref,
+};
 use anyhow::{Context, bail};
 use clap::{Args, Parser};
 use giputils::hash::GHashMap;
@@ -47,8 +50,10 @@ impl Default for PortfolioConfig {
 }
 
 pub struct Portfolio {
+    ots: Transys,
     ts: Transys,
     sym: VarSymbols,
+    rst: Restore,
     frontend: Box<dyn Frontend>,
     cert: Option<PathBuf>,
     cfg: PortfolioConfig,
@@ -74,6 +79,8 @@ impl Worker {
     fn run(
         &self,
         ts: &Transys,
+        ots: &Transys,
+        rst: &Restore,
         sym: &VarSymbols,
         frontend: &mut dyn Frontend,
         tracer: PipeTracerSend,
@@ -86,31 +93,22 @@ impl Worker {
         let mut engine = create_bl_engine(self.cfg.clone(), ts, sym);
         engine.add_tracer(Box::new(tracer));
         let res = engine.check();
-        write_certificate(
-            frontend,
-            engine.as_mut(),
-            self.cert.as_ref().map(|c| c.path()),
-            res,
-        );
+        if let Some(cert_path) = self.cert.as_ref().map(|c| c.path()) {
+            let certificate = match res {
+                McResult::Satisfied => {
+                    let cert = rst.restore_proof(engine.proof(), &ots);
+                    frontend.bl_certificate(McBlCertificate::Satisfied(cert))
+                }
+                McResult::Violated(_) => {
+                    let cert = rst.restore_cex(&engine.cex());
+                    frontend.bl_certificate(McBlCertificate::Violated(cert))
+                }
+                McResult::Unknown(_) => panic!(),
+            };
+            std::fs::write(cert_path, format!("{certificate}")).unwrap();
+        };
         exit(0);
     }
-}
-
-fn write_certificate(
-    frontend: &mut dyn Frontend,
-    engine: &mut dyn Engine,
-    cert: Option<&std::path::Path>,
-    res: McResult,
-) {
-    let Some(cert_path) = cert else {
-        return;
-    };
-    let certificate = match res {
-        McResult::Safe => frontend.safe_certificate(engine.proof()),
-        McResult::Unsafe(_) => frontend.unsafe_certificate(engine.witness()),
-        McResult::Unknown(_) => return,
-    };
-    std::fs::write(cert_path, format!("{certificate}")).unwrap();
 }
 
 impl Portfolio {
@@ -121,6 +119,9 @@ impl Portfolio {
         cert: Option<PathBuf>,
         cfg: PortfolioConfig,
     ) -> anyhow::Result<Self> {
+        let rst = Restore::new(&ts);
+        let ots = ts.clone();
+        let (ts, rst) = ts.preproc(&PreprocConfig::default(), rst);
         let temp_dir = tempfile::TempDir::new_in("/tmp/rIC3/").unwrap();
         let mut engines = Vec::new();
         let mut new_engine = |name, args: &str| {
@@ -156,7 +157,9 @@ impl Portfolio {
         }
         Ok(Self {
             ts,
+            ots,
             sym,
+            rst,
             frontend,
             cert,
             cfg,
@@ -205,16 +208,13 @@ impl Portfolio {
         self.tracer.trace_state(prop, res);
         let prop_prefix = prop.map(|p| format!("p{p}: ")).unwrap_or_default();
         match res {
-            McResult::Safe => info!("{}{} proved the property", worker.name, prop_prefix),
-            McResult::Unsafe(d) => info!(
+            McResult::Satisfied => info!("{}{} proved the property", worker.name, prop_prefix),
+            McResult::Violated(d) => info!(
                 "{}{} found a counterexample at depth {d}",
                 worker.name, prop_prefix
             ),
             McResult::Unknown(Some(d)) => {
-                info!(
-                    "{}{} found no counterexample at depth {d}",
-                    worker.name, prop_prefix
-                );
+                info!("{}{} proved at depth {d}", worker.name, prop_prefix);
             }
             McResult::Unknown(None) => {}
         }
@@ -326,7 +326,14 @@ impl Portfolio {
                 }
                 fork::Fork::Child => {
                     drop(tracer_recv);
-                    worker.run(&self.ts, &self.sym, self.frontend.as_mut(), tracer_send);
+                    worker.run(
+                        &self.ts,
+                        &self.ots,
+                        &self.rst,
+                        &self.sym,
+                        self.frontend.as_mut(),
+                        tracer_send,
+                    );
                 }
             }
         }
@@ -378,7 +385,7 @@ pub struct LightPortfolio {
     sym: VarSymbols,
     cfg: LightPortfolioConfig,
     ecfgs: Vec<EngineConfig>,
-    engines: Vec<Box<dyn Engine>>,
+    engines: Vec<Box<dyn BlEngine>>,
     ctrl: EngineCtrl,
 }
 

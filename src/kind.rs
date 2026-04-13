@@ -1,5 +1,5 @@
 use crate::{
-    BlProof, Engine, McProof, McResult, McWitness,
+    BlCex, BlEngine, BlProof, Engine, McResult,
     config::{EngineConfig, EngineConfigBase, PreprocConfig},
     impl_config_deref,
     tracer::{Tracer, TracerIf},
@@ -143,16 +143,16 @@ impl Engine for Kind {
                 let bad = self.get_bad(k);
                 let res = self.solver.solve(&[bad]);
                 if !res {
-                    self.tracer.trace_state(None, McResult::Safe);
-                    return McResult::Safe;
+                    self.tracer.trace_state(None, McResult::Satisfied);
+                    return McResult::Satisfied;
                 }
             }
             if !self.cfg.skip_bmc {
                 let mut assump: LitVec = self.uts.ts.inits().iter().flatten().copied().collect();
                 assump.push(self.get_bad(k));
                 if self.solver.solve(&assump) {
-                    self.tracer.trace_state(None, McResult::Unsafe(k));
-                    return McResult::Unsafe(k);
+                    self.tracer.trace_state(None, McResult::Violated(k));
+                    return McResult::Violated(k);
                 }
             }
             self.tracer.trace_state(None, McResult::Unknown(Some(k)));
@@ -164,8 +164,10 @@ impl Engine for Kind {
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
         self.tracer.add_tracer(tracer);
     }
+}
 
-    fn proof(&mut self) -> McProof {
+impl BlEngine for Kind {
+    fn proof(&mut self) -> BlProof {
         if self.cfg.simple_path {
             //TODO: support certifaiger with simple path constraint
             error!("k-induction with simple path constraint not support certifaiger");
@@ -283,16 +285,16 @@ impl Engine for Kind {
         bads.push(!aux_latchs[0]);
         proof.bad = LitVec::from(proof.rel.new_or(bads));
         assert!(proof.input.len() + proof.latch.len() == sum + k);
-        McProof::Bl(BlProof { proof })
+        BlProof { proof }
     }
 
-    fn witness(&mut self) -> McWitness {
-        let mut wit = self.uts.witness(self.solver.as_ref());
-        wit = self.rst.restore_witness(&wit);
-        wit.exact_state(&self.ots, true);
+    fn cex(&mut self) -> BlCex {
+        let mut cex = self.uts.cex(self.solver.as_ref());
+        cex = self.rst.restore_cex(&cex);
+        cex.exact_state(&self.ots, true);
         if let Some(prop) = self.cfg.prop {
-            wit.bad_id = prop;
+            cex.bad_id = prop;
         }
-        McWitness::Bl(wit)
+        cex
     }
 }

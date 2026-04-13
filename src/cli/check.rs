@@ -5,7 +5,7 @@ use rIC3::{
     Engine, McResult,
     config::EngineConfig,
     create_bl_engine, create_wl_engine,
-    frontend::{Frontend, certificate_check, frontend_from_model},
+    frontend::{certificate_check, frontend_from_model},
     portfolio::{Portfolio, PortfolioConfig},
     tracer::LogTracer,
     transys::TransysIf,
@@ -27,9 +27,9 @@ pub struct CheckConfig {
     #[arg(long, default_value_t = false)]
     pub certify: bool,
 
-    /// print witness when model is unsafe
+    /// print counterexample when model is unsafe
     #[arg(long, default_value_t = false)]
-    pub witness: bool,
+    pub cex: bool,
 
     /// interrupt statistic
     #[arg(long, default_value_t = false)]
@@ -38,22 +38,22 @@ pub struct CheckConfig {
 
 fn report_res(chk: &CheckConfig, res: McResult) {
     match res {
-        McResult::Safe => {
-            println!("UNSAT");
-            if chk.witness {
+        McResult::Satisfied => {
+            println!("Satisfied");
+            if chk.cex {
                 println!("0");
             }
         }
-        McResult::Unsafe(_) => {
-            println!("SAT");
-            if chk.witness {
-                let witness = fs::read_to_string(chk.cert.as_ref().unwrap()).unwrap();
-                println!("{witness}");
+        McResult::Violated(_) => {
+            println!("Violated");
+            if chk.cex {
+                let cex = fs::read_to_string(chk.cert.as_ref().unwrap()).unwrap();
+                println!("{cex}");
             }
         }
         McResult::Unknown(_) => {
             println!("UNKNOWN");
-            if chk.witness {
+            if chk.cex {
                 println!("2");
             }
         }
@@ -68,7 +68,7 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
     chk.model = chk.model.canonicalize()?;
     info!("the model to be checked: {}", chk.model.display());
     let mut tmp_cert = None;
-    if chk.cert.is_none() && (chk.certify || chk.witness) {
+    if chk.cert.is_none() && (chk.certify || chk.cex) {
         let tmp_cert_file = tempfile::NamedTempFile::new().unwrap();
         chk.cert = Some(PathBuf::from(tmp_cert_file.path()));
         tmp_cert = Some(tmp_cert_file);
@@ -79,29 +79,34 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
         return res;
     }
     let mut frontend = frontend_from_model(&chk.model)?;
-    let log_tracer = Box::new(LogTracer::new(cfg.as_ref()));
-    let mut engine: Box<dyn Engine> = if cfg.is_wl() {
+    let res = if cfg.is_wl() {
         let (wts, _symbols) = frontend.wts();
-        // info!("origin ts has {}", ts.statistic());
-        create_wl_engine(cfg.clone(), wts)
+        let mut engine = create_wl_engine(cfg.clone(), wts);
+        engine.add_tracer(Box::new(LogTracer::new(cfg.as_ref())));
+        interrupt_statistic(&chk, engine.as_mut());
+        let res = engine.check();
+        engine.statistic();
+        if let Some(cert_path) = &chk.cert {
+            let cert = engine.certificate(res);
+            let cert = frontend.wl_certificate(cert);
+            fs::write(cert_path, format!("{cert}")).unwrap();
+        }
+        res
     } else {
         let (ts, symbols) = frontend.ts();
         info!("origin ts has {}", ts.statistic());
-        create_bl_engine(cfg.clone(), ts, symbols)
+        let mut engine = create_bl_engine(cfg.clone(), ts, symbols);
+        engine.add_tracer(Box::new(LogTracer::new(cfg.as_ref())));
+        interrupt_statistic(&chk, engine.as_mut());
+        let res = engine.check();
+        engine.statistic();
+        if let Some(cert_path) = &chk.cert {
+            let cert = engine.certificate(res);
+            let cert = frontend.bl_certificate(cert);
+            fs::write(cert_path, format!("{cert}")).unwrap();
+        }
+        res
     };
-    engine.add_tracer(log_tracer);
-    interrupt_statistic(&chk, engine.as_mut());
-    let res = engine.check();
-    engine.statistic();
-    match res {
-        McResult::Safe => {
-            certificate(&chk, frontend.as_mut(), engine.as_mut(), true);
-        }
-        McResult::Unsafe(_) => {
-            certificate(&chk, frontend.as_mut(), engine.as_mut(), false);
-        }
-        McResult::Unknown(_) => todo!(),
-    }
     report_res(&chk, res);
     if chk.certify {
         assert!(certificate_check(&chk.model, chk.cert.as_ref().unwrap()));
@@ -120,24 +125,6 @@ fn interrupt_statistic(chk: &CheckConfig, engine: &mut dyn Engine) {
             exit(124);
         });
     }
-}
-
-pub fn certificate(
-    chk: &CheckConfig,
-    frontend: &mut dyn Frontend,
-    engine: &mut dyn Engine,
-    res: bool,
-) {
-    if chk.cert.is_none() {
-        return;
-    }
-    let cert = if res {
-        frontend.safe_certificate(engine.proof())
-    } else {
-        let witness = engine.witness();
-        frontend.unsafe_certificate(witness)
-    };
-    fs::write(chk.cert.as_ref().unwrap(), format!("{cert}")).unwrap();
 }
 
 pub fn portfolio_main(chk: CheckConfig, cfg: PortfolioConfig) -> anyhow::Result<()> {

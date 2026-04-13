@@ -1,4 +1,4 @@
-use crate::{McResult, McWitness, transys::certify::BlWitness};
+use crate::{McBlCertificate, McResult};
 use log::info;
 use logicrs::LitVec;
 use std::{
@@ -12,8 +12,8 @@ pub trait TracerIf: Sync + Send {
     /// Trace a result. prop is None for all properties, Some(id) for a specific property.
     fn trace_state(&mut self, _prop: Option<usize>, _res: McResult) {}
 
-    /// Trace witness
-    fn trace_witness(&mut self, _w: &McWitness) {}
+    /// Trace cex
+    fn trace_cert(&mut self, _c: &McBlCertificate) {}
 
     /// Trace an invariant for a specific step (`Some(k)`) or for all steps (`None`).
     fn trace_invariant(&mut self, _inv: &LitVec, _k: Option<usize>) {}
@@ -45,19 +45,19 @@ pub fn state_channel_tracer() -> (StateChannelTracerSx, StateChannelTracerRx) {
 }
 
 /// Sender part of witness channel tracer
-pub struct WitnessChannelTracerSx(Sender<McWitness>);
+pub struct WitnessChannelTracerSx(Sender<McBlCertificate>);
 
 impl TracerIf for WitnessChannelTracerSx {
-    fn trace_witness(&mut self, w: &McWitness) {
-        let _ = self.0.send(w.clone());
+    fn trace_cert(&mut self, c: &McBlCertificate) {
+        let _ = self.0.send(c.clone());
     }
 }
 
 /// Receiver part of witness channel tracer
-pub struct WitnessChannelTracerRx(Receiver<McWitness>);
+pub struct WitnessChannelTracerRx(Receiver<McBlCertificate>);
 
 impl Deref for WitnessChannelTracerRx {
-    type Target = Receiver<McWitness>;
+    type Target = Receiver<McBlCertificate>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -89,9 +89,9 @@ impl Tracer {
         }
     }
 
-    pub fn trace_witness(&mut self, w: &McWitness) {
+    pub fn trace_cert(&mut self, c: &McBlCertificate) {
         for t in self.tracers.iter_mut() {
-            t.trace_witness(w);
+            t.trace_cert(c);
         }
     }
 
@@ -133,8 +133,8 @@ impl LogTracer {
 impl TracerIf for LogTracer {
     fn trace_state(&mut self, _prop: Option<usize>, res: McResult) {
         match res {
-            McResult::Safe => info!("{} proved the property", self.name),
-            McResult::Unsafe(d) => info!("{} found a counterexample at depth {d}", self.name),
+            McResult::Satisfied => info!("{} proved the property", self.name),
+            McResult::Violated(d) => info!("{} found a counterexample at depth {d}", self.name),
             McResult::Unknown(Some(d)) => {
                 if self.update_unknow(d) {
                     info!("{} found no counterexample up to depth {d}", self.name)
@@ -161,11 +161,10 @@ impl TracerIf for PipeTracerSend {
         }
     }
 
-    fn trace_witness(&mut self, w: &McWitness) {
-        if let Some(witness) = self.witness.as_mut() {
-            let w = w.as_bl().unwrap();
-            let line = ron::to_string(w).unwrap();
-            let _ = writeln!(witness, "{line}");
+    fn trace_cert(&mut self, c: &McBlCertificate) {
+        if let Some(cex) = self.witness.as_mut() {
+            let line = ron::to_string(c).unwrap();
+            let _ = writeln!(cex, "{line}");
         }
     }
 
@@ -228,20 +227,18 @@ impl PipeStateTracerRecv {
 pub struct PipeWitnessTracerRecv(BufReader<PipeReader>);
 
 impl PipeWitnessTracerRecv {
-    pub fn recv(&mut self) -> McWitness {
+    pub fn recv(&mut self) -> McBlCertificate {
         let line = recv_line(&mut self.0);
-        let witness: BlWitness = ron::from_str(line.trim_end()).unwrap();
-        McWitness::Bl(witness)
+        ron::from_str(line.trim_end()).unwrap()
     }
 
     pub fn pipe(&self) -> &PipeReader {
         self.0.get_ref()
     }
 
-    pub fn try_recv(&mut self) -> Option<McWitness> {
+    pub fn try_recv(&mut self) -> Option<McBlCertificate> {
         let line = try_recv_line(&mut self.0)?;
-        let witness: BlWitness = ron::from_str(line.trim_end()).unwrap();
-        Some(McWitness::Bl(witness))
+        ron::from_str(line.trim_end()).unwrap()
     }
 }
 
