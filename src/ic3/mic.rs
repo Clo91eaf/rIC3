@@ -208,13 +208,27 @@ impl IC3 {
     ) -> LitVec {
         let start = Instant::now();
         if parameter.level == 0 {
-            self.solvers[frame - 1].set_domain(
-                self.tsctx
-                    .lits_next(&cube)
-                    .iter()
-                    .copied()
-                    .chain(cube.iter().copied()),
-            );
+            let next_lits = self.tsctx.lits_next(&cube);
+            let base_iter = next_lits.iter().copied().chain(cube.iter().copied());
+
+            if let Some(ref hint) = self.struct_hint {
+                let max_v = *self.tsctx.max_var() as usize + 1;
+                let control_lits: Vec<logicrs::Lit> = (0..max_v)
+                    .filter_map(|idx| {
+                        let var = logicrs::Var::new(idx);
+                        if hint.get(var) == Some(crate::structhint::SignalType::Control) {
+                            Some(var.lit())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                self.solvers[frame - 1].set_domain(
+                    base_iter.chain(control_lits.into_iter()),
+                );
+            } else {
+                self.solvers[frame - 1].set_domain(base_iter);
+            }
         }
         self.statistic.avg_mic_cube_len += cube.len();
         self.statistic.num_mic += 1;
@@ -249,13 +263,26 @@ impl IC3 {
                 (cube, i) = self.handle_down_success(frame, cube, i, new_cube);
                 if parameter.level == 0 {
                     self.solvers[frame - 1].unset_domain();
-                    self.solvers[frame - 1].set_domain(
-                        self.tsctx
-                            .lits_next(&cube)
-                            .iter()
-                            .copied()
-                            .chain(cube.iter().copied()),
-                    );
+                    let next_lits2 = self.tsctx.lits_next(&cube);
+                    let base_iter2 = next_lits2.iter().copied().chain(cube.iter().copied());
+                    if let Some(ref hint) = self.struct_hint {
+                        let max_v = *self.tsctx.max_var() as usize + 1;
+                        let control_lits: Vec<logicrs::Lit> = (0..max_v)
+                            .filter_map(|idx| {
+                                let var = logicrs::Var::new(idx);
+                                if hint.get(var) == Some(crate::structhint::SignalType::Control) {
+                                    Some(var.lit())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        self.solvers[frame - 1].set_domain(
+                            base_iter2.chain(control_lits.into_iter()),
+                        );
+                    } else {
+                        self.solvers[frame - 1].set_domain(base_iter2);
+                    }
                 }
             } else {
                 self.statistic.mic_drop.fail();
