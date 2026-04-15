@@ -250,7 +250,25 @@ impl Frontend for AigFrontend {
             }
             res.push(line);
         }
-        res.push(".\n".to_string());
+        res.push(".".to_string());
+
+        // Extended: output per-step latch state (after "." marker)
+        // Format: "#state" header, then one line per step with latch values
+        if std::env::var("STRUCTHINT_FULL_TRACE").map_or(false, |v| v == "1") {
+            res.push("#states".to_string());
+            for (step, state) in wit.state.iter().enumerate() {
+                let mut line = String::new();
+                let state_map: GHashMap<Var, bool> =
+                    GHashMap::from_iter(state.iter().map(|l| (l.var(), l.polarity())));
+                for l in self.oaig.latchs.iter() {
+                    let r = state_map.get(&Var::new(l.input)).copied().unwrap_or(false);
+                    line.push(if r { '1' } else { '0' });
+                }
+                res.push(line);
+            }
+        }
+
+        res.push(String::new());
         Box::new(res.join("\n"))
     }
 
