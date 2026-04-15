@@ -281,7 +281,12 @@ impl IC3 {
             }
         }
         let lift = TsLift::new(TransysUnroll::new(&ts));
-        let localabs = LocalAbs::new(&ts, &cfg);
+        let mut localabs = LocalAbs::new(&ts, &cfg);
+        if (cfg.abs_cst || cfg.abs_trans) {
+            if let Some(ref hint) = struct_hint {
+                localabs.add_control_vars(hint);
+            }
+        }
         Self {
             cfg,
             ts,

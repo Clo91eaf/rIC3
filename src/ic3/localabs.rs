@@ -70,6 +70,26 @@ impl LocalAbs {
         self.refine.contains(&x)
     }
 
+    /// Add RTL control variables to initial refinement set.
+    pub fn add_control_vars(&mut self, hint: &crate::structhint::StructHint) {
+        let before = self.refine.len();
+        for latch_var in self.uts.ts.latch.iter() {
+            if let Some(crate::structhint::SignalType::Control) = hint.get(*latch_var) {
+                if !self.refine.contains(latch_var) {
+                    self.refine.insert(*latch_var);
+                    if let Some(o) = self.opt.get(latch_var) {
+                        self.solver.add_clause(&[o.lit()]);
+                    }
+                }
+            }
+        }
+        let added = self.refine.len() - before;
+        if added > 0 {
+            log::info!("localabs: added {} control vars to initial refinement (total {})",
+                added, self.refine.len());
+        }
+    }
+
     fn check(&mut self, mut assumps: LitVec) -> Option<LitVec> {
         let olen = assumps.len();
         assumps.extend(self.uts.lits_next(&self.uts.ts.bad, self.uts.num_unroll));
