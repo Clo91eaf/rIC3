@@ -73,6 +73,14 @@ pub struct IC3Config {
     #[arg(long = "abs-trans", default_value_t = false)]
     pub abs_trans: bool,
 
+    /// disable StructHint VSIDS activity boost
+    #[arg(long = "no-boost", default_value_t = false)]
+    pub no_boost: bool,
+
+    /// disable StructHint MIC domain extension
+    #[arg(long = "no-domain", default_value_t = false)]
+    pub no_domain: bool,
+
     /// dropping proof-obligation
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
@@ -192,7 +200,9 @@ impl IC3 {
         }
         let mut solver = self.inf_solver.clone();
         if let Some(ref hint) = self.struct_hint {
-            solver.dcs.apply_struct_hints(hint, self.adaptive_alpha);
+            if !self.cfg.no_boost {
+                solver.dcs.apply_struct_hints(hint, self.adaptive_alpha);
+            }
         }
         self.solvers.push(solver);
         self.frame.push(Frame::new());
@@ -266,7 +276,9 @@ impl IC3 {
         });
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
-            inf_solver.dcs.apply_struct_hints(hint, initial_alpha);
+            if !cfg.no_boost {
+                inf_solver.dcs.apply_struct_hints(hint, initial_alpha);
+            }
         }
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
