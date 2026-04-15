@@ -128,6 +128,7 @@ pub struct AigFrontend {
     ts: Transys,
     ts_symbols: VarSymbols,
     rst: VarVMap,
+    pub full_trace: bool,
 }
 
 impl AigFrontend {
@@ -172,6 +173,7 @@ impl AigFrontend {
             ts,
             ts_symbols,
             rst,
+            full_trace: false,
         }
     }
 
@@ -254,7 +256,7 @@ impl Frontend for AigFrontend {
 
         // Extended: output per-step latch state (after "." marker)
         // Format: "#state" header, then one line per step with latch values
-        if std::env::var("STRUCTHINT_FULL_TRACE").map_or(false, |v| v == "1") {
+        if self.full_trace {
             res.push("#states".to_string());
             for (step, state) in wit.state.iter().enumerate() {
                 let mut line = String::new();

@@ -37,6 +37,10 @@ pub struct CheckConfig {
     #[arg(long, default_value_t = false)]
     pub interrupt_statistic: bool,
 
+    /// include per-step latch values in witness output
+    #[arg(long = "full-trace", default_value_t = false)]
+    pub full_trace: bool,
+
     /// path to StructHint JSON metadata file for structure-aware solving
     #[arg(long = "struct-hint")]
     pub struct_hint: Option<PathBuf>,
@@ -97,7 +101,9 @@ pub fn check(mut chk: CheckConfig, cfg: EngineConfig) -> anyhow::Result<()> {
     let mut frontend: Box<dyn Frontend> = match chk.model.extension() {
         Some(ext) if (ext == "aig") | (ext == "aag") => {
             let aig = Aig::from_file(&chk.model);
-            Box::new(AigFrontend::new(aig))
+            let mut fe = AigFrontend::new(aig);
+            fe.full_trace = chk.full_trace;
+            Box::new(fe)
         }
         Some(ext) if (ext == "btor") | (ext == "btor2") => {
             let btor = Btor::from_file(&chk.model);
