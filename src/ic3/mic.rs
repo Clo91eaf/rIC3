@@ -243,6 +243,17 @@ impl IC3 {
         } else {
             self.activity.sort_by_activity(&mut cube, true);
         }
+        // hint-mic: push datapath literals to front (try dropping them first)
+        if self.cfg.hint_mic {
+            if let Some(ref hint) = self.struct_hint {
+                cube.sort_by_key(|lit| {
+                    match hint.get(lit.var()) {
+                        Some(crate::structhint::SignalType::Control) => 1, // keep control at back
+                        _ => 0, // datapath/unknown at front = drop first
+                    }
+                });
+            }
+        }
         if self.cfg.parent_lemma
             && let Some(parent) = self.frame.parent_lemma(&cube, frame)
         {

@@ -118,7 +118,11 @@ impl Index<Var> for Activity {
 impl Activity {
     #[inline]
     pub fn reserve(&mut self, var: Var) {
+        let is_new = self.activity.len() <= var.0 as usize;
         self.activity.reserve(var);
+        if is_new {
+            self.activity[var] = 1.0;
+        }
         self.bucket_heap.reserve(var);
     }
 
@@ -331,6 +335,10 @@ impl DagCnfSolver {
     pub fn decide(&mut self) -> bool {
         while let Some(decide) = self.vsids.pop() {
             if self.value.v(decide.lit()).is_none() {
+                self.total_decisions += 1;
+                if decide.0 < self.hinted_vars.len() as u32 && self.hinted_vars[decide] {
+                    self.boost_decisions += 1;
+                }
                 let decide = if !self.cfg.phase_saving || self.phase_saving[decide].is_none() {
                     Lit::new(decide, self.rng.random_bool(0.5))
                 } else {
@@ -342,5 +350,63 @@ impl DagCnfSolver {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_initializes_to_one() {
+        let mut activity = Activity::default();
+        let v0 = Var::new(0);
+        let v1 = Var::new(1);
+        activity.reserve(v0);
+        activity.reserve(v1);
+        assert_eq!(activity[v0], 1.0);
+        assert_eq!(activity[v1], 1.0);
+    }
+
+    #[test]
+    fn boost_multiplies_from_one() {
+        let mut activity = Activity::default();
+        let v0 = Var::new(0);
+        let v1 = Var::new(1);
+        activity.reserve(v0);
+        activity.reserve(v1);
+        activity.boost(v0, 2.0);
+        assert_eq!(activity[v0], 2.0);
+        assert_eq!(activity[v1], 1.0);
+    }
+
+    #[test]
+    fn boost_changes_decision_order() {
+        let mut vsids = Vsids::default();
+        let control = Var::new(0);
+        let datapath = Var::new(1);
+        vsids.reserve(control);
+        vsids.reserve(datapath);
+
+        // Boost control variable
+        vsids.boost(control, 2.0);
+
+        // Push both into decision queue
+        vsids.push(control);
+        vsids.push(datapath);
+
+        // Control should be decided first (higher activity)
+        let first = vsids.pop().unwrap();
+        assert_eq!(first, control, "boosted control var should be decided first");
+    }
+
+    #[test]
+    fn reserve_does_not_reset_bumped_activity() {
+        let mut activity = Activity::default();
+        let v0 = Var::new(0);
+        activity.reserve(v0);
+        activity.bump(v0); // activity = 1.0 + 1.0 = 2.0
+        activity.reserve(v0); // should NOT reset to 1.0
+        assert!(activity[v0] > 1.0, "reserve must not reset existing activity");
     }
 }

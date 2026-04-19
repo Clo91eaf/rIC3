@@ -59,6 +59,11 @@ pub struct DagCnfSolver {
     constraint: Vec<LitVec>,
 
     statistic: SolverStatistic,
+
+    // StructHint boost tracking
+    hinted_vars: VarMap<bool>,
+    pub boost_decisions: u64,
+    pub total_decisions: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +107,9 @@ impl DagCnfSolver {
             rng: SmallRng::seed_from_u64(0),
             cfg: Default::default(),
             mark: Default::default(),
+            hinted_vars: Default::default(),
+            boost_decisions: 0,
+            total_decisions: 0,
         };
         while solver.num_var() < solver.dc.num_var() {
             solver.new_var();
@@ -125,6 +133,8 @@ impl DagCnfSolver {
             let weight = hint.activity_weight(var, alpha);
             if weight != 1.0 {
                 self.vsids.boost(var, weight);
+                self.hinted_vars.reserve(var);
+                self.hinted_vars[var] = true;
             }
         }
     }

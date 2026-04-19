@@ -78,8 +78,12 @@ pub struct IC3Config {
     pub no_boost: bool,
 
     /// disable StructHint MIC domain extension
-    #[arg(long = "no-domain", default_value_t = false)]
+    #[arg(long = "no-domain", default_value_t = true)]
     pub no_domain: bool,
+
+    /// StructHint MIC: drop datapath literals first during clause generalization
+    #[arg(long = "hint-mic", default_value_t = false)]
+    pub hint_mic: bool,
 
     /// dropping proof-obligation
     #[arg(
@@ -206,6 +210,15 @@ impl IC3 {
         }
         self.solvers.push(solver);
         self.frame.push(Frame::new());
+        // Log per-frame boost decision ratio from the previous frame's solver
+        if self.solvers.len() >= 2 {
+            let prev = &self.solvers[self.solvers.len() - 2];
+            if prev.dcs.total_decisions > 0 {
+                let ratio = prev.dcs.boost_decisions as f64 / prev.dcs.total_decisions as f64 * 100.0;
+                info!("boost_frame[{}]: decisions={}, boosted={}, ratio={:.1}%",
+                      self.solvers.len() - 2, prev.dcs.total_decisions, prev.dcs.boost_decisions, ratio);
+            }
+        }
         if self.level() == 0 {
             for init in self.tsctx.init.clone() {
                 self.add_lemma(0, !init, true, None);
@@ -458,11 +471,23 @@ impl Engine for IC3 {
         info!("obligations: {}", self.obligations.statistic());
         info!("{}", self.frame.statistic(false));
         let mut statistic = SolverStatistic::default();
+        let mut total_decisions: u64 = 0;
+        let mut boost_decisions: u64 = 0;
         for s in self.solvers.iter() {
             statistic += *s.statistic();
+            total_decisions += s.dcs.total_decisions;
+            boost_decisions += s.dcs.boost_decisions;
         }
+        // Also count inf_solver
+        total_decisions += self.inf_solver.dcs.total_decisions;
+        boost_decisions += self.inf_solver.dcs.boost_decisions;
         info!("{statistic:#?}");
         info!("{:#?}", self.statistic);
+        if total_decisions > 0 {
+            let ratio = boost_decisions as f64 / total_decisions as f64 * 100.0;
+            info!("boost_tracking: total_decisions={}, boost_decisions={}, boost_ratio={:.1}%",
+                  total_decisions, boost_decisions, ratio);
+        }
     }
 
     fn get_ctrl(&self) -> crate::EngineCtrl {
