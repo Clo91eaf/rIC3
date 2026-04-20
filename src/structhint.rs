@@ -9,6 +9,8 @@ struct VarHintRaw {
     name: String,
     #[serde(rename = "type")]
     hint_type: String,
+    #[serde(default)]
+    score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -29,6 +31,7 @@ pub enum SignalType {
 pub struct VarHint {
     pub name: String,
     pub signal_type: SignalType,
+    pub score: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,7 @@ impl StructHint {
                 VarHint {
                     name: raw_hint.name,
                     signal_type,
+                    score: raw_hint.score,
                 },
             );
         }
@@ -67,10 +71,25 @@ impl StructHint {
         self.hints.get(&(*var)).map(|h| h.signal_type)
     }
 
+    pub fn hints_ref(&self) -> &HashMap<u32, VarHint> {
+        &self.hints
+    }
+
     pub fn activity_weight(&self, var: Var, alpha: f64) -> f64 {
-        match self.get(var) {
-            Some(SignalType::Control) => alpha,
-            _ => 1.0,
+        match self.hints.get(&(*var)) {
+            Some(hint) => {
+                if let Some(score) = hint.score {
+                    // Continuous: map score [0,1] -> activity [0, alpha]
+                    score * alpha
+                } else {
+                    // Binary fallback
+                    match hint.signal_type {
+                        SignalType::Control => alpha,
+                        _ => 0.0,
+                    }
+                }
+            }
+            None => 0.0,
         }
     }
 

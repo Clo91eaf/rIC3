@@ -166,6 +166,13 @@ impl Activity {
         self.bucket_heap.up(var, act);
     }
 
+    pub fn set(&mut self, var: Var, value: f64) {
+        self.activity[var] = value;
+        self.check(var);
+        let act = unsafe { &mut *(self as *mut Activity) };
+        self.bucket_heap.up(var, act);
+    }
+
     const DECAY: f64 = 0.95;
 
     #[inline]
@@ -248,6 +255,14 @@ impl Vsids {
     /// Used by StructHint to give control variables a head start.
     pub fn boost(&mut self, var: Var, factor: f64) {
         self.activity.boost(var, factor);
+        self.bucket
+            .buckets
+            .reserve(self.activity.bucket_table[self.activity.bucket_table.len() - 1] as usize + 1);
+    }
+
+    /// Directly set initial activity for a variable.
+    pub fn set_activity(&mut self, var: Var, value: f64) {
+        self.activity.set(var, value);
         self.bucket
             .buckets
             .reserve(self.activity.bucket_table[self.activity.bucket_table.len() - 1] as usize + 1);

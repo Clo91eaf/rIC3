@@ -119,6 +119,19 @@ impl IC3 {
                 assump.push(v.lit());
             }
         }
+        // hint-refine: sort control variables first in refinement order
+        if self.cfg.hint_refine {
+            if let Some(ref hint) = self.struct_hint {
+                let opt_rev = &self.localabs.opt_rev;
+                assump.sort_by_key(|lit| {
+                    let orig_var = opt_rev.get(&lit.var()).copied().unwrap_or(lit.var());
+                    match hint.get(orig_var) {
+                        Some(crate::structhint::SignalType::Control) => 0, // control first
+                        _ => 1,
+                    }
+                });
+            }
+        }
         assump.shuffle(&mut self.rng);
         if let Some(assump) = self.localabs.check(assump) {
             for l in assump {

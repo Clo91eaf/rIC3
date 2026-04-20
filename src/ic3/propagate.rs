@@ -10,7 +10,34 @@ impl IC3 {
         let level = self.level();
         let from = from.unwrap_or(self.frame.early).max(1);
         for frame_idx in from..level {
-            self.frame[frame_idx].sort_by_key(|x| x.len());
+            if self.cfg.hint_push {
+                if let Some(ref hint) = self.struct_hint {
+                    // Sort by: shorter clauses first, then by average SCOAP score (higher first)
+                    self.frame[frame_idx].sort_by(|a, b| {
+                        let len_cmp = a.len().cmp(&b.len());
+                        if len_cmp != std::cmp::Ordering::Equal {
+                            return len_cmp;
+                        }
+                        // Tiebreak: higher average hint score = push first
+                        let score = |clause: &crate::ic3::frame::FrameLemma| -> i64 {
+                            let sum: f64 = clause.iter().map(|lit| {
+                                match hint.hints_ref().get(&(*lit.var())) {
+                                    Some(h) => h.score.unwrap_or(
+                                        if h.signal_type == crate::structhint::SignalType::Control { 1.0 } else { 0.0 }
+                                    ),
+                                    None => 0.0,
+                                }
+                            }).sum();
+                            (sum * -1000.0) as i64 // negative so higher score sorts first
+                        };
+                        score(a).cmp(&score(b))
+                    });
+                } else {
+                    self.frame[frame_idx].sort_by_key(|x| x.len());
+                }
+            } else {
+                self.frame[frame_idx].sort_by_key(|x| x.len());
+            }
             let frame = self.frame[frame_idx].clone();
             for mut lemma in frame {
                 if self.frame[frame_idx].iter().all(|l| l.ne(&lemma)) {

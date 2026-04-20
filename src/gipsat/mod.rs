@@ -131,8 +131,9 @@ impl DagCnfSolver {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
-            if weight != 1.0 {
-                self.vsids.boost(var, weight);
+            // Directly set initial activity (not multiplicative boost)
+            self.vsids.set_activity(var, weight);
+            if weight > 1.0 {
                 self.hinted_vars.reserve(var);
                 self.hinted_vars[var] = true;
             }

@@ -85,6 +85,18 @@ pub struct IC3Config {
     #[arg(long = "hint-mic", default_value_t = false)]
     pub hint_mic: bool,
 
+    /// StructHint LocalAbs: refine control variables first
+    #[arg(long = "hint-refine", default_value_t = false)]
+    pub hint_refine: bool,
+
+    /// StructHint alpha: VSIDS activity boost factor (default: from STRUCTHINT_ALPHA env or 2.0)
+    #[arg(long = "alpha")]
+    pub alpha: Option<f64>,
+
+    /// StructHint push: prioritize pushing clauses with high-score variables
+    #[arg(long = "hint-push", default_value_t = false)]
+    pub hint_push: bool,
+
     /// dropping proof-obligation
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
@@ -271,10 +283,12 @@ impl IC3 {
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
         let frame = Frames::new(&tsctx);
-        let initial_alpha: f64 = std::env::var("STRUCTHINT_ALPHA")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2.0);
+        let initial_alpha: f64 = cfg.alpha.unwrap_or_else(|| {
+            std::env::var("STRUCTHINT_ALPHA")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2.0)
+        });
         let adaptive_enabled = std::env::var("STRUCTHINT_ADAPTIVE")
             .ok()
             .and_then(|s| s.parse::<bool>().ok())
