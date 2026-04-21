@@ -125,6 +125,7 @@ impl DagCnfSolver {
                 if !self.analyze.seen(lit) && self.level[lit] > 0 {
                     if lit.var() != self.constrain_act {
                         self.vsids.bump(lit.var());
+                        self.vmtf.move_to_front(lit.var());
                     }
                     self.analyze[lit] = Mark::Seen;
                     if self.level[lit] >= self.highest_level() as u32 {

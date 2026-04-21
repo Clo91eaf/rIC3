@@ -27,7 +27,7 @@ pub use statistic::SolverStatistic;
 use std::iter::empty;
 use std::time::Instant;
 pub use ts::*;
-use vsids::Vsids;
+use vsids::{Vsids, VmtfQueue};
 
 #[derive(Clone)]
 pub struct DagCnfSolver {
@@ -70,6 +70,9 @@ pub struct DagCnfSolver {
     hint_reboost_interval: usize,     // re-apply every N conflicts (0=off)
     conflict_count: usize,
     hint_decay_factor: f64,           // decay multiplier for hinted vars (1.0=off)
+
+    // VMTF queue for SCOAP-initialized variable ordering
+    vmtf: VmtfQueue,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +123,7 @@ impl DagCnfSolver {
             hint_reboost_interval: 0,
             conflict_count: 0,
             hint_decay_factor: 1.0,
+            vmtf: VmtfQueue::new(),
         };
         while solver.num_var() < solver.dc.num_var() {
             solver.new_var();
@@ -138,7 +142,8 @@ impl DagCnfSolver {
     }
 
     pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64,
-                              reboost_interval: usize, decay_factor: f64, tiebreak: bool) {
+                              reboost_interval: usize, decay_factor: f64, tiebreak: bool,
+                              vmtf_enabled: bool) {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
@@ -159,6 +164,16 @@ impl DagCnfSolver {
         self.hint_reboost_interval = reboost_interval;
         self.hint_decay_factor = decay_factor;
         self.conflict_count = 0;
+
+        if vmtf_enabled {
+            let mut scores: VarMap<f64> = Default::default();
+            for var_idx in 0..self.num_var() {
+                let var = Var::new(var_idx);
+                scores.reserve(var);
+                scores[var] = hint.activity_weight(var, alpha);
+            }
+            self.vmtf.init_from_scores(&scores, self.num_var());
+        }
     }
 
     fn simplify_clause(&mut self, clause: &[Lit]) -> Option<LitVec> {

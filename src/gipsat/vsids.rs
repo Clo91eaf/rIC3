@@ -4,6 +4,60 @@ use logicrs::{Lbool, Lit, LitVec, Var, VarMap};
 use rand::RngExt;
 use std::ops::{Index, MulAssign};
 
+#[derive(Clone)]
+pub struct VmtfQueue {
+    pub queue: Vec<Var>,      // ordered list, front = highest priority
+    pos: VarMap<u32>,         // var -> position in queue
+    enabled: bool,
+}
+
+impl VmtfQueue {
+    pub fn new() -> Self {
+        Self {
+            queue: Vec::new(),
+            pos: Default::default(),
+            enabled: false,
+        }
+    }
+
+    pub fn init_from_scores(&mut self, scores: &VarMap<f64>, num_vars: usize) {
+        let mut vars: Vec<(Var, f64)> = (0..num_vars)
+            .map(|i| {
+                let v = Var::new(i);
+                let s = if (v.0 as usize) < scores.len() { scores[v] } else { 0.0 };
+                (v, s)
+            })
+            .collect();
+        vars.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        self.queue = vars.into_iter().map(|(v, _)| v).collect();
+        self.pos = Default::default();
+        for (i, &v) in self.queue.iter().enumerate() {
+            self.pos.reserve(v);
+            self.pos[v] = i as u32;
+        }
+        self.enabled = true;
+    }
+
+    pub fn move_to_front(&mut self, var: Var) {
+        if !self.enabled || var.0 as usize >= self.pos.len() {
+            return;
+        }
+        let old_pos = self.pos[var] as usize;
+        if old_pos == 0 { return; }
+        // Shift everything from 0..old_pos right by 1
+        for i in (0..old_pos).rev() {
+            self.queue[i + 1] = self.queue[i];
+            self.pos[self.queue[i + 1]] = (i + 1) as u32;
+        }
+        self.queue[0] = var;
+        self.pos[var] = 0;
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct BinaryHeap {
     heap: Gvec<Var>,
@@ -394,6 +448,28 @@ impl Bucket {
 impl DagCnfSolver {
     #[inline]
     pub fn decide(&mut self) -> bool {
+        // Try VMTF queue if enabled
+        if self.vmtf.is_enabled() {
+            for i in 0..self.vmtf.queue.len() {
+                let var = self.vmtf.queue[i];
+                if self.value.v(var.lit()).is_none() && self.domain_has(var) {
+                    self.total_decisions += 1;
+                    if var.0 < self.hinted_vars.len() as u32 && self.hinted_vars[var] {
+                        self.boost_decisions += 1;
+                    }
+                    let decide = if !self.cfg.phase_saving || self.phase_saving[var].is_none() {
+                        Lit::new(var, self.rng.random_bool(0.5))
+                    } else {
+                        Lit::new(var, self.phase_saving[var] != Lbool::FALSE)
+                    };
+                    self.pos_in_trail.push(self.trail.len() as u32);
+                    self.assign(decide, CREF_NONE);
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Original VSIDS decide
         while let Some(decide) = self.vsids.pop() {
             if self.value.v(decide.lit()).is_none() {
                 self.total_decisions += 1;

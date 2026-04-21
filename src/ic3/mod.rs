@@ -105,6 +105,10 @@ pub struct IC3Config {
     #[arg(long = "hint-domain")]
     pub hint_domain: Option<f64>,
 
+    /// Adaptive domain: include top N% of scored variables (e.g. 30 = top 30%)
+    #[arg(long = "hint-domain-pct")]
+    pub hint_domain_pct: Option<u32>,
+
     /// Slower decay for hinted vars: multiply decay factor by this (e.g. 0.5 = half decay speed)
     #[arg(long = "hint-decay")]
     pub hint_decay: Option<f64>,
@@ -112,6 +116,10 @@ pub struct IC3Config {
     /// Use SCOAP scores as tiebreaker within VSIDS buckets
     #[arg(long = "hint-tiebreak", default_value_t = false)]
     pub hint_tiebreak: bool,
+
+    /// Use VMTF queue initialized with SCOAP scores for variable decisions
+    #[arg(long = "hint-vmtf", default_value_t = false)]
+    pub hint_vmtf: bool,
 
     /// dropping proof-obligation
     #[arg(
@@ -238,6 +246,7 @@ impl IC3 {
                     self.cfg.hint_reboost,
                     self.cfg.hint_decay.unwrap_or(1.0),
                     self.cfg.hint_tiebreak,
+                    self.cfg.hint_vmtf,
                 );
             }
         }
@@ -274,7 +283,7 @@ impl IC3 {
 }
 
 impl IC3 {
-    pub fn new(cfg: IC3Config, mut ts: Transys, symbols: VarSymbols, struct_hint: Option<crate::structhint::StructHint>) -> Self {
+    pub fn new(mut cfg: IC3Config, mut ts: Transys, symbols: VarSymbols, struct_hint: Option<crate::structhint::StructHint>) -> Self {
         cfg.validate();
         let ots = ts.clone();
         if let Some(prop) = cfg.prop {
@@ -322,6 +331,27 @@ impl IC3 {
         let struct_hint = struct_hint.map(|hint| {
             hint.remap(|v| rst.try_forward(logicrs::Lit::new(v, false)).map(|l| l.var()))
         });
+        // Compute adaptive domain threshold from percentile
+        if let Some(pct) = cfg.hint_domain_pct {
+            if let Some(ref hint) = struct_hint {
+                let mut scores: Vec<f64> = (0..*tsctx.max_var() as usize + 1)
+                    .map(|idx| {
+                        let var = logicrs::Var::new(idx);
+                        let w = hint.activity_weight(var, initial_alpha);
+                        (w - 1.0) / (initial_alpha - 1.0).max(0.001)
+                    })
+                    .filter(|&s| s > 0.01)
+                    .collect();
+                scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
+                if !scores.is_empty() {
+                    let idx = (scores.len() as u32 * pct / 100).min(scores.len() as u32 - 1) as usize;
+                    let threshold = scores[idx];
+                    log::info!("hint-domain-pct {}: threshold={:.3} ({} of {} scored vars in domain)",
+                              pct, threshold, idx, scores.len());
+                    cfg.hint_domain = Some(threshold);
+                }
+            }
+        }
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
             if !cfg.no_boost {
@@ -330,6 +360,7 @@ impl IC3 {
                     cfg.hint_reboost,
                     cfg.hint_decay.unwrap_or(1.0),
                     cfg.hint_tiebreak,
+                    cfg.hint_vmtf,
                 );
             }
         }
