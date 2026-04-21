@@ -218,6 +218,7 @@ pub struct Vsids {
     pub heap: BinaryHeap,
     pub bucket: Bucket,
     pub enable_bucket: bool,
+    pub hint_scores: VarMap<f64>,
 }
 
 impl Vsids {
@@ -239,7 +240,7 @@ impl Vsids {
     #[inline]
     pub fn pop(&mut self) -> Option<Var> {
         if self.enable_bucket {
-            return self.bucket.pop();
+            return self.bucket.pop(&self.hint_scores);
         }
         self.heap.pop(&self.activity)
     }
@@ -290,6 +291,7 @@ impl Default for Vsids {
             heap: Default::default(),
             bucket: Bucket::new(),
             enable_bucket: true,
+            hint_scores: Default::default(),
         }
     }
 }
@@ -332,10 +334,40 @@ impl Bucket {
     }
 
     #[inline]
-    pub fn pop(&mut self) -> Option<Var> {
+    pub fn pop(&mut self, hint_scores: &VarMap<f64>) -> Option<Var> {
         while self.head < self.buckets.len() as u32 {
             if !self.buckets[self.head].is_empty() {
-                let var = self.buckets[self.head].pop().unwrap();
+                if hint_scores.len() == 0 {
+                    // No hints: plain LIFO
+                    let var = self.buckets[self.head].pop().unwrap();
+                    self.in_bucket[var] = false;
+                    return Some(var);
+                }
+                // Hint tiebreak: find variable with highest score in this bucket
+                let bucket = &mut self.buckets[self.head];
+                let blen = bucket.len();
+                let mut best_idx: usize = blen - 1; // default: last (LIFO)
+                let mut best_score = -1.0f64;
+                for i in 0..blen {
+                    let v = bucket[i as u32];
+                    let score = if (v.0 as usize) < hint_scores.len() {
+                        hint_scores[v]
+                    } else {
+                        0.0
+                    };
+                    if score > best_score {
+                        best_score = score;
+                        best_idx = i;
+                    }
+                }
+                // Swap best to last position, then pop
+                let last = blen - 1;
+                if best_idx != last {
+                    let tmp = bucket[best_idx as u32];
+                    bucket[best_idx as u32] = bucket[last as u32];
+                    bucket[last as u32] = tmp;
+                }
+                let var = bucket.pop().unwrap();
                 self.in_bucket[var] = false;
                 return Some(var);
             }

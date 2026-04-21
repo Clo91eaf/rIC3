@@ -109,6 +109,10 @@ pub struct IC3Config {
     #[arg(long = "hint-decay")]
     pub hint_decay: Option<f64>,
 
+    /// Use SCOAP scores as tiebreaker within VSIDS buckets
+    #[arg(long = "hint-tiebreak", default_value_t = false)]
+    pub hint_tiebreak: bool,
+
     /// dropping proof-obligation
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
@@ -233,6 +237,7 @@ impl IC3 {
                     hint, self.adaptive_alpha,
                     self.cfg.hint_reboost,
                     self.cfg.hint_decay.unwrap_or(1.0),
+                    self.cfg.hint_tiebreak,
                 );
             }
         }
@@ -324,6 +329,7 @@ impl IC3 {
                     hint, initial_alpha,
                     cfg.hint_reboost,
                     cfg.hint_decay.unwrap_or(1.0),
+                    cfg.hint_tiebreak,
                 );
             }
         }

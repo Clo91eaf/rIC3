@@ -138,7 +138,7 @@ impl DagCnfSolver {
     }
 
     pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64,
-                              reboost_interval: usize, decay_factor: f64) {
+                              reboost_interval: usize, decay_factor: f64, tiebreak: bool) {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
@@ -149,6 +149,11 @@ impl DagCnfSolver {
             if weight > 1.0 {
                 self.hinted_vars.reserve(var);
                 self.hinted_vars[var] = true;
+            }
+            // Store score for tiebreaking within VSIDS buckets
+            if tiebreak {
+                self.vsids.hint_scores.reserve(var);
+                self.vsids.hint_scores[var] = (weight - 1.0) / (alpha - 1.0).max(0.001);
             }
         }
         self.hint_reboost_interval = reboost_interval;
