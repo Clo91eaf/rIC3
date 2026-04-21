@@ -125,6 +125,14 @@ pub struct IC3Config {
     #[arg(long = "hint-vmtf", default_value_t = false)]
     pub hint_vmtf: bool,
 
+    /// Enable curriculum alpha: start high, decay per frame (default: off)
+    #[arg(long = "hint-curriculum", default_value_t = false)]
+    pub hint_curriculum: bool,
+
+    /// Speculative batch assignment: assign top-K scored variables at once (0=disabled)
+    #[arg(long = "hint-speculate", default_value_t = 0)]
+    pub hint_speculate: usize,
+
     /// dropping proof-obligation
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
@@ -245,13 +253,23 @@ impl IC3 {
         let mut solver = self.inf_solver.clone();
         if let Some(ref hint) = self.struct_hint {
             if !self.cfg.no_boost {
+                let frame_alpha = if self.cfg.hint_curriculum {
+                    // Curriculum: decay alpha by 0.9^frame, floor at 2.0
+                    let decay = 0.9f64.powi(self.level() as i32);
+                    let fa = (self.adaptive_alpha * decay).max(2.0);
+                    info!("Curriculum alpha: frame={} decay={:.3} alpha={:.3}", self.level(), decay, fa);
+                    fa
+                } else {
+                    self.adaptive_alpha
+                };
                 solver.dcs.apply_struct_hints(
-                    hint, self.adaptive_alpha,
+                    hint, frame_alpha,
                     self.cfg.hint_reboost,
                     self.cfg.hint_cold_restart,
                     self.cfg.hint_decay.unwrap_or(1.0),
                     self.cfg.hint_tiebreak,
                     self.cfg.hint_vmtf,
+                    self.cfg.hint_speculate,
                 );
             }
         }
@@ -367,6 +385,7 @@ impl IC3 {
                     cfg.hint_decay.unwrap_or(1.0),
                     cfg.hint_tiebreak,
                     cfg.hint_vmtf,
+                    cfg.hint_speculate,
                 );
             }
         }
