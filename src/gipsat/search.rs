@@ -82,7 +82,14 @@ impl DagCnfSolver {
     pub fn search(&mut self, assumption: &[Lit], noc: Option<f64>) -> Option<bool> {
         let mut num_conflict = 0.0_f64;
         'ml: loop {
-            let conflict = self.propagate();
+            // Check for conflict stored from speculative batch assignment
+            let conflict = if self.speculate_conflict != CREF_NONE {
+                let c = self.speculate_conflict;
+                self.speculate_conflict = CREF_NONE;
+                c
+            } else {
+                self.propagate()
+            };
             if conflict != CREF_NONE {
                 num_conflict += 1.0;
                 if self.highest_level() == 0 {
@@ -178,6 +185,24 @@ impl DagCnfSolver {
                 }
                 if !self.decide() {
                     return Some(true);
+                }
+                // Speculative batch: after first decision, make up to K-1 more
+                // decide+propagate cycles without returning to the outer loop.
+                if self.hint_speculate_k > 1 {
+                    for _ in 1..self.hint_speculate_k {
+                        let conflict = self.propagate();
+                        if conflict != CREF_NONE {
+                            // Conflict from speculative propagation; let the
+                            // main loop handle it on the next iteration.
+                            self.speculate_conflict = conflict;
+                            break;
+                        }
+                        if !self.decide() {
+                            // No more variables to decide (SAT candidate).
+                            // The main loop's propagate() will confirm.
+                            break;
+                        }
+                    }
                 }
             }
         }

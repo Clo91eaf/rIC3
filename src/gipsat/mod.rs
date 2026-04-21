@@ -74,6 +74,12 @@ pub struct DagCnfSolver {
 
     // VMTF queue for SCOAP-initialized variable ordering
     vmtf: VmtfQueue,
+
+    // Speculative batch assignment: assign top-K scored variables per decide() call (0=off)
+    hint_speculate_k: usize,
+
+    // Conflict found during speculative batch assignment (CREF_NONE = none)
+    speculate_conflict: CRef,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +132,8 @@ impl DagCnfSolver {
             conflict_count: 0,
             hint_decay_factor: 1.0,
             vmtf: VmtfQueue::new(),
+            hint_speculate_k: 0,
+            speculate_conflict: CREF_NONE,
         };
         while solver.num_var() < solver.dc.num_var() {
             solver.new_var();
@@ -146,7 +154,7 @@ impl DagCnfSolver {
     pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64,
                               reboost_interval: usize, cold_restart_interval: usize,
                               decay_factor: f64, tiebreak: bool,
-                              vmtf_enabled: bool) {
+                              vmtf_enabled: bool, speculate_k: usize) {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
@@ -178,6 +186,7 @@ impl DagCnfSolver {
             }
             self.vmtf.init_from_scores(&scores, self.num_var());
         }
+        self.hint_speculate_k = speculate_k;
     }
 
     fn simplify_clause(&mut self, clause: &[Lit]) -> Option<LitVec> {
