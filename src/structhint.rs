@@ -76,20 +76,38 @@ impl StructHint {
     }
 
     pub fn activity_weight(&self, var: Var, alpha: f64) -> f64 {
-        match self.hints.get(&(*var)) {
+        let score = match self.hints.get(&(*var)) {
             Some(hint) => {
-                if let Some(score) = hint.score {
-                    // Continuous: map score [0,1] -> activity [0, alpha]
-                    score * alpha
+                if let Some(s) = hint.score {
+                    s
                 } else {
-                    // Binary fallback
+                    // Binary hint without score: control=1.0, datapath=0.2
                     match hint.signal_type {
-                        SignalType::Control => alpha,
-                        _ => 0.0,
+                        SignalType::Control => 1.0,
+                        _ => 0.2,
                     }
                 }
             }
-            None => 0.0,
+            None => 0.2,
+        };
+        // Uniform mapping: score [0,1] -> activity [1, alpha]
+        1.0 + score * (alpha - 1.0)
+    }
+
+    pub fn bump_weight(&self, var: Var, alpha: f64) -> f64 {
+        match self.hints.get(&(*var)) {
+            Some(hint) => {
+                if let Some(score) = hint.score {
+                    // Persistent bump: score [0,1] -> bump multiplier [1, 1+alpha]
+                    1.0 + score * alpha
+                } else {
+                    match hint.signal_type {
+                        SignalType::Control => 1.0 + alpha,
+                        _ => 1.0,
+                    }
+                }
+            }
+            None => 1.0,
         }
     }
 

@@ -64,6 +64,12 @@ pub struct DagCnfSolver {
     hinted_vars: VarMap<bool>,
     pub boost_decisions: u64,
     pub total_decisions: u64,
+
+    // StructHint persistent mechanisms
+    hint_init_activity: VarMap<f64>,  // stored initial activity for re-boost
+    hint_reboost_interval: usize,     // re-apply every N conflicts (0=off)
+    conflict_count: usize,
+    hint_decay_factor: f64,           // decay multiplier for hinted vars (1.0=off)
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +116,10 @@ impl DagCnfSolver {
             hinted_vars: Default::default(),
             boost_decisions: 0,
             total_decisions: 0,
+            hint_init_activity: Default::default(),
+            hint_reboost_interval: 0,
+            conflict_count: 0,
+            hint_decay_factor: 1.0,
         };
         while solver.num_var() < solver.dc.num_var() {
             solver.new_var();
@@ -127,17 +137,23 @@ impl DagCnfSolver {
         self.rng = SmallRng::seed_from_u64(rseed);
     }
 
-    pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64) {
+    pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64,
+                              reboost_interval: usize, decay_factor: f64) {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
             let weight = hint.activity_weight(var, alpha);
-            // Directly set initial activity (not multiplicative boost)
             self.vsids.set_activity(var, weight);
+            // Store for re-boost
+            self.hint_init_activity.reserve(var);
+            self.hint_init_activity[var] = weight;
             if weight > 1.0 {
                 self.hinted_vars.reserve(var);
                 self.hinted_vars[var] = true;
             }
         }
+        self.hint_reboost_interval = reboost_interval;
+        self.hint_decay_factor = decay_factor;
+        self.conflict_count = 0;
     }
 
     fn simplify_clause(&mut self, clause: &[Lit]) -> Option<LitVec> {

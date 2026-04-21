@@ -3,6 +3,7 @@ use super::{
     cdb::{CREF_NONE, CRef, ClauseKind},
 };
 use log::debug;
+use logicrs::Var;
 use logicrs::{Lbool, Lit};
 
 impl DagCnfSolver {
@@ -107,6 +108,31 @@ impl DagCnfSolver {
                 }
                 self.vsids.decay();
                 self.cdb.decay();
+                // Method 1: periodic re-boost
+                self.conflict_count += 1;
+                if self.hint_reboost_interval > 0
+                    && self.conflict_count % self.hint_reboost_interval == 0
+                {
+                    for var_idx in 0..self.hint_init_activity.len() {
+                        let var = Var::new(var_idx);
+                        let init = self.hint_init_activity[var];
+                        if init > 0.0 && self.vsids.activity[var] < init {
+                            self.vsids.activity.set(var, init);
+                        }
+                    }
+                }
+                // Method 3: slower decay for hinted vars (compensate the global decay)
+                if self.hint_decay_factor < 1.0 {
+                    for var_idx in 0..self.hinted_vars.len() {
+                        let var = Var::new(var_idx);
+                        if self.hinted_vars[var] {
+                            // Partially undo the decay: multiply by 1/decay^(1-factor)
+                            // factor=0.5 means hinted vars decay at half the rate
+                            let compensation = 1.0 / f64::powf(0.95, 1.0 - self.hint_decay_factor);
+                            self.vsids.activity.boost(var, compensation);
+                        }
+                    }
+                }
             } else {
                 if let Some(noc) = noc
                     && num_conflict >= noc

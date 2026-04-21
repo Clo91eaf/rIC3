@@ -97,6 +97,18 @@ pub struct IC3Config {
     #[arg(long = "hint-push", default_value_t = false)]
     pub hint_push: bool,
 
+    /// Re-apply hint activity every N conflicts (0=disabled)
+    #[arg(long = "hint-reboost", default_value_t = 0)]
+    pub hint_reboost: usize,
+
+    /// SCOAP-based domain restriction: only decide variables with score > threshold (0=disabled)
+    #[arg(long = "hint-domain")]
+    pub hint_domain: Option<f64>,
+
+    /// Slower decay for hinted vars: multiply decay factor by this (e.g. 0.5 = half decay speed)
+    #[arg(long = "hint-decay")]
+    pub hint_decay: Option<f64>,
+
     /// dropping proof-obligation
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
@@ -217,7 +229,11 @@ impl IC3 {
         let mut solver = self.inf_solver.clone();
         if let Some(ref hint) = self.struct_hint {
             if !self.cfg.no_boost {
-                solver.dcs.apply_struct_hints(hint, self.adaptive_alpha);
+                solver.dcs.apply_struct_hints(
+                    hint, self.adaptive_alpha,
+                    self.cfg.hint_reboost,
+                    self.cfg.hint_decay.unwrap_or(1.0),
+                );
             }
         }
         self.solvers.push(solver);
@@ -287,7 +303,7 @@ impl IC3 {
             std::env::var("STRUCTHINT_ALPHA")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(2.0)
+                .unwrap_or(10.0)
         });
         let adaptive_enabled = std::env::var("STRUCTHINT_ADAPTIVE")
             .ok()
@@ -304,7 +320,11 @@ impl IC3 {
         let mut inf_solver = TransysSolver::new(&tsctx);
         if let Some(ref hint) = struct_hint {
             if !cfg.no_boost {
-                inf_solver.dcs.apply_struct_hints(hint, initial_alpha);
+                inf_solver.dcs.apply_struct_hints(
+                    hint, initial_alpha,
+                    cfg.hint_reboost,
+                    cfg.hint_decay.unwrap_or(1.0),
+                );
             }
         }
         let lift = TsLift::new(TransysUnroll::new(&ts));

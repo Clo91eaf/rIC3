@@ -104,6 +104,7 @@ pub struct Activity {
     act_inc: f64,
     bucket_heap: BinaryHeap,
     bucket_table: Gvec<u32>,
+    bump_weights: VarMap<f64>,
 }
 
 impl Index<Var> for Activity {
@@ -120,8 +121,10 @@ impl Activity {
     pub fn reserve(&mut self, var: Var) {
         let is_new = self.activity.len() <= var.0 as usize;
         self.activity.reserve(var);
+        self.bump_weights.reserve(var);
         if is_new {
             self.activity[var] = 1.0;
+            self.bump_weights[var] = 1.0;
         }
         self.bucket_heap.reserve(var);
     }
@@ -149,7 +152,7 @@ impl Activity {
 
     #[inline]
     pub fn bump(&mut self, var: Var) {
-        self.activity[var] += self.act_inc;
+        self.activity[var] += self.act_inc * self.bump_weights[var];
         self.check(var);
         let act = unsafe { &mut *(self as *mut Activity) };
         self.bucket_heap.up(var, act);
@@ -164,6 +167,11 @@ impl Activity {
         self.check(var);
         let act = unsafe { &mut *(self as *mut Activity) };
         self.bucket_heap.up(var, act);
+    }
+
+    pub fn set_bump_weight(&mut self, var: Var, weight: f64) {
+        self.bump_weights.reserve(var);
+        self.bump_weights[var] = weight;
     }
 
     pub fn set(&mut self, var: Var, value: f64) {
@@ -199,6 +207,7 @@ impl Default for Activity {
             activity: Default::default(),
             bucket_heap: Default::default(),
             bucket_table,
+            bump_weights: Default::default(),
         }
     }
 }
@@ -258,6 +267,11 @@ impl Vsids {
         self.bucket
             .buckets
             .reserve(self.activity.bucket_table[self.activity.bucket_table.len() - 1] as usize + 1);
+    }
+
+    /// Set persistent bump weight for a variable (used during every conflict).
+    pub fn set_bump_weight(&mut self, var: Var, weight: f64) {
+        self.activity.set_bump_weight(var, weight);
     }
 
     /// Directly set initial activity for a variable.

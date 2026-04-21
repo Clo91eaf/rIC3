@@ -212,7 +212,30 @@ impl IC3 {
             let base_iter = next_lits.iter().copied().chain(cube.iter().copied());
 
             let no_domain = self.cfg.no_domain;
-            if !no_domain {
+            if let Some(threshold) = self.cfg.hint_domain {
+                // Score-based domain: only allow variables with score > threshold
+                if let Some(ref hint) = self.struct_hint {
+                    let max_v = *self.tsctx.max_var() as usize + 1;
+                    let alpha = self.adaptive_alpha;
+                    let domain_lits: Vec<logicrs::Lit> = (0..max_v)
+                        .filter_map(|idx| {
+                            let var = logicrs::Var::new(idx);
+                            let w = hint.activity_weight(var, alpha);
+                            // Include if score exceeds threshold (normalized)
+                            if (w - 1.0) / (alpha - 1.0) > threshold {
+                                Some(var.lit())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    self.solvers[frame - 1].set_domain(
+                        base_iter.chain(domain_lits.into_iter()),
+                    );
+                } else {
+                    self.solvers[frame - 1].set_domain(base_iter);
+                }
+            } else if !no_domain {
                 if let Some(ref hint) = self.struct_hint {
                     let max_v = *self.tsctx.max_var() as usize + 1;
                     let control_lits: Vec<logicrs::Lit> = (0..max_v)
