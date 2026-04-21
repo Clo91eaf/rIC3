@@ -68,6 +68,7 @@ pub struct DagCnfSolver {
     // StructHint persistent mechanisms
     hint_init_activity: VarMap<f64>,  // stored initial activity for re-boost
     hint_reboost_interval: usize,     // re-apply every N conflicts (0=off)
+    hint_cold_restart_interval: usize, // cold restart every N conflicts (0=off)
     conflict_count: usize,
     hint_decay_factor: f64,           // decay multiplier for hinted vars (1.0=off)
 
@@ -121,6 +122,7 @@ impl DagCnfSolver {
             total_decisions: 0,
             hint_init_activity: Default::default(),
             hint_reboost_interval: 0,
+            hint_cold_restart_interval: 0,
             conflict_count: 0,
             hint_decay_factor: 1.0,
             vmtf: VmtfQueue::new(),
@@ -142,7 +144,8 @@ impl DagCnfSolver {
     }
 
     pub fn apply_struct_hints(&mut self, hint: &crate::structhint::StructHint, alpha: f64,
-                              reboost_interval: usize, decay_factor: f64, tiebreak: bool,
+                              reboost_interval: usize, cold_restart_interval: usize,
+                              decay_factor: f64, tiebreak: bool,
                               vmtf_enabled: bool) {
         for var_idx in 0..self.num_var() {
             let var = Var::new(var_idx);
@@ -162,6 +165,7 @@ impl DagCnfSolver {
             }
         }
         self.hint_reboost_interval = reboost_interval;
+        self.hint_cold_restart_interval = cold_restart_interval;
         self.hint_decay_factor = decay_factor;
         self.conflict_count = 0;
 

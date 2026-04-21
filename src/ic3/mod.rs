@@ -101,6 +101,10 @@ pub struct IC3Config {
     #[arg(long = "hint-reboost", default_value_t = 0)]
     pub hint_reboost: usize,
 
+    /// Cold restart: fully reset VSIDS to SCOAP values every N conflicts (0=disabled)
+    #[arg(long = "hint-cold-restart", default_value_t = 0)]
+    pub hint_cold_restart: usize,
+
     /// SCOAP-based domain restriction: only decide variables with score > threshold (0=disabled)
     #[arg(long = "hint-domain")]
     pub hint_domain: Option<f64>,
@@ -244,6 +248,7 @@ impl IC3 {
                 solver.dcs.apply_struct_hints(
                     hint, self.adaptive_alpha,
                     self.cfg.hint_reboost,
+                    self.cfg.hint_cold_restart,
                     self.cfg.hint_decay.unwrap_or(1.0),
                     self.cfg.hint_tiebreak,
                     self.cfg.hint_vmtf,
@@ -358,6 +363,7 @@ impl IC3 {
                 inf_solver.dcs.apply_struct_hints(
                     hint, initial_alpha,
                     cfg.hint_reboost,
+                    cfg.hint_cold_restart,
                     cfg.hint_decay.unwrap_or(1.0),
                     cfg.hint_tiebreak,
                     cfg.hint_vmtf,

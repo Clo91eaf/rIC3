@@ -155,7 +155,7 @@ impl BinaryHeap {
 #[derive(Clone)]
 pub struct Activity {
     activity: VarMap<f64>,
-    act_inc: f64,
+    pub act_inc: f64,
     bucket_heap: BinaryHeap,
     bucket_table: Gvec<u32>,
     bump_weights: VarMap<f64>,

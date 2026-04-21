@@ -121,6 +121,18 @@ impl DagCnfSolver {
                         }
                     }
                 }
+                // Cold restart: fully reset all VSIDS activities to SCOAP init values
+                if self.hint_cold_restart_interval > 0
+                    && self.conflict_count % self.hint_cold_restart_interval == 0
+                {
+                    for var_idx in 0..self.hint_init_activity.len() {
+                        let var = Var::new(var_idx);
+                        let init = self.hint_init_activity[var];
+                        self.vsids.activity.set(var, init);
+                    }
+                    // Reset bump increment to initial value
+                    self.vsids.activity.act_inc = 1.0;
+                }
                 // Method 3: slower decay for hinted vars (compensate the global decay)
                 if self.hint_decay_factor < 1.0 {
                     for var_idx in 0..self.hinted_vars.len() {
