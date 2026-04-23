@@ -5,6 +5,79 @@ use logicrs::{Lit, LitOrdVec, LitVec, Var, satif::Satif};
 use rand::{RngExt, seq::SliceRandom};
 use std::time::Instant;
 
+pub(super) struct Blocked<'a, 'cube> {
+    ic3: &'a mut IC3,
+    frame: usize,
+    cube: &'cube LitVec,
+    order: BlockedOrder,
+    strengthen: bool,
+    constraint: Vec<LitVec>,
+}
+
+#[derive(Default)]
+enum BlockedOrder {
+    Activity {
+        ascending: bool,
+    },
+    #[allow(unused)]
+    Inn,
+    #[default]
+    None,
+}
+
+impl<'a, 'cube> Blocked<'a, 'cube> {
+    pub(super) fn with_act_order(mut self, ascending: bool) -> Self {
+        self.order = BlockedOrder::Activity { ascending };
+        self
+    }
+
+    #[allow(unused)]
+    pub(super) fn with_inn_order(mut self) -> Self {
+        self.order = BlockedOrder::Inn;
+        self
+    }
+
+    pub(super) fn with_strengthen(mut self) -> Self {
+        self.strengthen = true;
+        self
+    }
+
+    pub(super) fn with_constraint(mut self, constraint: &[LitVec]) -> Self {
+        self.constraint = constraint.to_vec();
+        self
+    }
+
+    pub(super) fn check(self) -> bool {
+        let Self {
+            ic3,
+            frame,
+            cube,
+            order,
+            strengthen,
+            constraint,
+        } = self;
+
+        let ordered_cube = match order {
+            BlockedOrder::Activity { ascending } => {
+                let mut ordered = cube.clone();
+                ic3.activity.sort_by_activity(&mut ordered, ascending);
+                Some(ordered)
+            }
+            BlockedOrder::Inn => {
+                let mut ordered = cube.clone();
+                ordered.sort_by(|a, b| ic3.inn_cmp(b, a));
+                Some(ordered)
+            }
+            BlockedOrder::None => None,
+        };
+        let cube = ordered_cube
+            .as_ref()
+            .map(|cube| cube.as_slice())
+            .unwrap_or_else(|| cube.as_slice());
+        ic3.solvers[frame - 1].inductive_with_constrain(cube, strengthen, constraint)
+    }
+}
+
 impl IC3 {
     pub(super) fn get_bad(&mut self) -> Option<(LitVec, Vec<LitVec>)> {
         trace!("getting bad state in frame {}", self.level());
@@ -33,34 +106,19 @@ impl IC3 {
         !self.solvers[frame].solve(lemma)
     }
 
-    #[inline]
-    #[allow(unused)]
-    pub(super) fn blocked(&mut self, frame: usize, cube: &LitVec, strengthen: bool) -> bool {
-        self.solvers[frame - 1].inductive(cube, strengthen)
-    }
-
-    pub(super) fn blocked_with_ordered(
+    pub(super) fn blocked<'cube>(
         &mut self,
         frame: usize,
-        cube: &LitVec,
-        strengthen: bool,
-    ) -> bool {
-        let mut ordered_cube = cube.clone();
-        self.activity.sort_by_activity(&mut ordered_cube, false);
-        self.solvers[frame - 1].inductive(&ordered_cube, strengthen)
-    }
-
-    pub(super) fn blocked_with_ordered_with_constrain(
-        &mut self,
-        frame: usize,
-        cube: &LitVec,
-        ascending: bool,
-        strengthen: bool,
-        constraint: Vec<LitVec>,
-    ) -> bool {
-        let mut ordered_cube = cube.clone();
-        self.activity.sort_by_activity(&mut ordered_cube, ascending);
-        self.solvers[frame - 1].inductive_with_constrain(&ordered_cube, strengthen, constraint)
+        cube: &'cube LitVec,
+    ) -> Blocked<'_, 'cube> {
+        Blocked {
+            ic3: self,
+            frame,
+            cube,
+            order: BlockedOrder::default(),
+            strengthen: false,
+            constraint: Vec::new(),
+        }
     }
 
     pub(super) fn get_pred(&mut self, frame: usize, strengthen: bool) -> (LitVec, Vec<LitVec>) {
@@ -73,7 +131,11 @@ impl IC3 {
         let order = |mut i: usize, cube: &mut [Lit]| -> bool {
             if self.cfg.inn || !self.auxiliary_var.is_empty() {
                 if i == 0 {
-                    cube.sort_by(|a, b| b.cmp(a));
+                    cube.sort_by(|a, b| {
+                        self.ts_top_lv[b]
+                            .cmp(&self.ts_top_lv[a])
+                            .then_with(|| self.activity.cmp(b, a))
+                    });
                     return true;
                 }
                 i -= 1;

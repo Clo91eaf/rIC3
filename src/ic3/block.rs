@@ -95,11 +95,7 @@ impl IC3 {
                         return BlockResult::Failure(po.depth);
                     } else {
                         self.obligations.clear();
-                        for f in self.frame.iter_mut() {
-                            for l in f.iter_mut() {
-                                l.po = None;
-                            }
-                        }
+                        self.frame.clear_po();
                         continue;
                     }
                 } else if po.frame > 0 {
@@ -122,7 +118,10 @@ impl IC3 {
                 continue;
             }
             let blocked_start = Instant::now();
-            let blocked = self.blocked_with_ordered(po.frame, &po.state, false);
+            let blocked = self
+                .blocked(po.frame, &po.state)
+                .with_act_order(false)
+                .check();
             self.statistic.block.blocked_time += blocked_start.elapsed();
             if blocked {
                 noc += 1;
@@ -199,13 +198,13 @@ impl IC3 {
         }
         *limit -= 1;
         loop {
-            if self.blocked_with_ordered_with_constrain(
-                frame,
-                &lemma,
-                false,
-                true,
-                constraint.to_vec(),
-            ) {
+            if self
+                .blocked(frame, &lemma)
+                .with_act_order(false)
+                .with_strengthen()
+                .with_constraint(constraint)
+                .check()
+            {
                 let mut mic = self.solvers[frame - 1].inductive_core().unwrap();
                 mic = self.mic(frame, mic, constraint, MicType::DropVar(parameter));
                 let (frame, mic) = self.push_lemma(frame, mic);

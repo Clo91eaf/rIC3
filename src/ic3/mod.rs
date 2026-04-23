@@ -11,10 +11,10 @@ use crate::{
 };
 use activity::Activity;
 use clap::{ArgAction, Args, Parser};
-use frame::{Frame, Frames};
+use frame::Frames;
 use giputils::{grc::Grc, logger::IntervalLogger};
 use log::{Level, debug, error, info, trace};
-use logicrs::{Lit, LitOrdVec, LitVec, LitVvec, Var, VarSymbols, satif::Satif};
+use logicrs::{Lit, LitOrdVec, LitVec, LitVvec, Var, VarMap, VarSymbols, satif::Satif};
 use proofoblig::{ProofObligation, ProofObligationQueue};
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,10 @@ impl IC3Config {
                 error!("{pre} (abs_cst or abs_trans)");
                 panic!();
             }
+            if self.pred_prop {
+                error!("{pre} pred-prop");
+                panic!();
+            }
         }
         if self.full_bad {
             error!("full-bad can't be used now");
@@ -147,6 +151,7 @@ pub struct IC3 {
     tsctx: Grc<TransysCtx>,
     solvers: Vec<TransysSolver>,
     inf_solver: TransysSolver,
+    ts_top_lv: VarMap<usize>,
     lift: TsLift,
     frame: Frames,
     obligations: ProofObligationQueue,
@@ -178,7 +183,7 @@ impl IC3 {
         }
         let solver = self.inf_solver.clone();
         self.solvers.push(solver);
-        self.frame.push(Frame::new());
+        self.frame.extend();
         if self.level() == 0 {
             for init in self.tsctx.init.clone() {
                 self.add_lemma(0, !init, true, None);
@@ -218,16 +223,13 @@ impl IC3 {
         ts.remove_gate_init(&mut rst);
         let mut uts = TransysUnroll::new(&ts);
         uts.unroll();
+        let ts_top_lv = ts.rel.level();
         if cfg.inn {
             ts = uts.internal_signals();
         }
-        let predprop = cfg.pred_prop.then(|| {
-            PredProp::new(
-                uts.clone(),
-                cfg.local_proof.then(|| cfg.prop.unwrap()),
-                cfg.inn,
-            )
-        });
+        let predprop = cfg
+            .pred_prop
+            .then(|| PredProp::new(uts.clone(), cfg.local_proof.then(|| cfg.prop.unwrap())));
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
         let frame = Frames::new(&tsctx);
@@ -243,6 +245,7 @@ impl IC3 {
             solvers: Vec::new(),
             inf_solver,
             lift,
+            ts_top_lv,
             statistic,
             obligations: ProofObligationQueue::new(),
             frame,
@@ -258,7 +261,7 @@ impl IC3 {
         }
     }
 
-    pub fn invariant(&self) -> Vec<LitVec> {
+    pub fn invariant(&mut self) -> Vec<LitVec> {
         self.inner_invariant()
             .iter()
             .map(|l| l.map_var(|l| self.rst.restore_var(l)))
@@ -269,8 +272,8 @@ impl IC3 {
 impl Engine for IC3 {
     fn check(&mut self) -> McResult {
         if !self.prep_prop_base() {
-            self.tracer.trace_state(None, McResult::Violated(0));
-            return McResult::Violated(0);
+            self.tracer.trace_state(None, McResult::SAT(0));
+            return McResult::SAT(0);
         }
         self.extend();
         loop {
@@ -280,13 +283,13 @@ impl Engine for IC3 {
                 match self.block(None) {
                     BlockResult::Failure(depth) => {
                         self.statistic.block.overall_time += start.elapsed();
-                        self.tracer.trace_state(None, McResult::Violated(depth));
-                        return McResult::Violated(depth);
+                        self.tracer.trace_state(None, McResult::SAT(depth));
+                        return McResult::SAT(depth);
                     }
                     BlockResult::Proved => {
                         self.statistic.block.overall_time += start.elapsed();
-                        self.tracer.trace_state(None, McResult::Satisfied);
-                        return McResult::Satisfied;
+                        self.tracer.trace_state(None, McResult::UNSAT);
+                        return McResult::UNSAT;
                     }
                     BlockResult::OverallTimeLimitExceeded => {
                         self.statistic.block.overall_time += start.elapsed();
@@ -318,10 +321,10 @@ impl Engine for IC3 {
             self.extend();
             let start = Instant::now();
             let propagate = self.propagate(None);
-            self.statistic.overall_propagate_time += start.elapsed();
+            self.statistic.propagate.overall_time += start.elapsed();
             if propagate {
-                self.tracer.trace_state(None, McResult::Satisfied);
-                return McResult::Satisfied;
+                self.tracer.trace_state(None, McResult::UNSAT);
+                return McResult::UNSAT;
             }
             self.propagate_to_inf();
         }

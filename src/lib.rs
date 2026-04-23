@@ -18,7 +18,7 @@ pub mod wltransys;
 
 use crate::{
     config::EngineConfig,
-    tracer::TracerIf,
+    tracer::{ExtractorIf, TracerIf},
     transys::{
         Transys,
         certify::{BlCex, BlProof},
@@ -87,10 +87,10 @@ impl EngineCtrl {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, EnumAsInner)]
 pub enum McResult {
-    /// Property is Satisfied
-    Satisfied,
+    /// Property is Proved
+    UNSAT,
     /// Property is Violated with Cex Depth
-    Violated(usize),
+    SAT(usize),
     /// Proved in Some(exact depth)
     Unknown(Option<usize>),
 }
@@ -107,12 +107,12 @@ impl BitOr for McResult {
     fn bitor(self, rhs: Self) -> Self::Output {
         use McResult::*;
         match (self, rhs) {
-            (Satisfied, Violated(_)) | (Violated(_), Satisfied) => {
+            (UNSAT, SAT(_)) | (SAT(_), UNSAT) => {
                 panic!("conflicting results: satisfied and violated")
             }
-            (Satisfied, _) | (_, Satisfied) => Satisfied,
-            (Violated(a), Violated(b)) => Violated(a.max(b)),
-            (Violated(a), Unknown(_)) | (Unknown(_), Violated(a)) => Violated(a),
+            (UNSAT, _) | (_, UNSAT) => UNSAT,
+            (SAT(a), SAT(b)) => SAT(a.max(b)),
+            (SAT(a), Unknown(_)) | (Unknown(_), SAT(a)) => SAT(a),
             (Unknown(a), Unknown(b)) => Unknown(match (a, b) {
                 (Some(x), Some(y)) => Some(x.max(y)),
                 (Some(x), None) | (None, Some(x)) => Some(x),
@@ -156,20 +156,24 @@ impl FromIterator<McResult> for MpMcResult {
 
 #[derive(Clone, Debug, EnumAsInner, Serialize, Deserialize)]
 pub enum McBlCertificate {
-    Satisfied(BlProof),
-    Violated(BlCex),
+    UNSAT(BlProof),
+    SAT(BlCex),
 }
 
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum McWlCertificate {
-    Satisfied(WlProof),
-    Violated(WlCex),
+    UNSAT(WlProof),
+    SAT(WlCex),
 }
 
 pub trait Engine: Send {
     fn check(&mut self) -> McResult;
 
-    fn add_tracer(&mut self, _tracer: Box<dyn TracerIf>) {}
+    fn add_tracer(&mut self, _tracer: Box<dyn TracerIf>) {
+        panic!("unsupport add tracer");
+    }
+
+    fn set_extractor(&mut self, _extractor: Box<dyn ExtractorIf>) {}
 
     fn statistic(&mut self) {}
 
@@ -189,8 +193,8 @@ pub trait BlEngine: Engine {
 
     fn certificate(&mut self, res: McResult) -> McBlCertificate {
         match res {
-            McResult::Satisfied => McBlCertificate::Satisfied(self.proof()),
-            McResult::Violated(_) => McBlCertificate::Violated(self.cex()),
+            McResult::UNSAT => McBlCertificate::UNSAT(self.proof()),
+            McResult::SAT(_) => McBlCertificate::SAT(self.cex()),
             McResult::Unknown(_) => panic!(),
         }
     }
@@ -207,8 +211,8 @@ pub trait WlEngine: Engine {
 
     fn certificate(&mut self, res: McResult) -> McWlCertificate {
         match res {
-            McResult::Satisfied => McWlCertificate::Satisfied(self.proof()),
-            McResult::Violated(_) => McWlCertificate::Violated(self.cex()),
+            McResult::UNSAT => McWlCertificate::UNSAT(self.proof()),
+            McResult::SAT(_) => McWlCertificate::SAT(self.cex()),
             McResult::Unknown(_) => panic!(),
         }
     }

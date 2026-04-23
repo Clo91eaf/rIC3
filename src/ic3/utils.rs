@@ -1,5 +1,7 @@
+use crate::ic3::IC3;
 use giputils::statistic::{Average, CountedDuration, RunningTime, SuccessRate};
-use std::{fmt::Debug, time::Duration};
+use logicrs::Var;
+use std::{cmp::Ordering, fmt::Debug, time::Duration};
 
 #[derive(Debug, Clone, Default)]
 pub struct Block {
@@ -9,6 +11,12 @@ pub struct Block {
     pub get_pred_time: Duration,
     pub mic_time: Duration,
     pub push_time: Duration,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Propagate {
+    pub overall_time: Duration,
+    pub push_inf_time: Duration,
 }
 
 #[allow(unused)]
@@ -27,10 +35,19 @@ pub struct Statistic {
 
     pub block: Block,
 
-    pub overall_propagate_time: Duration,
+    pub propagate: Propagate,
 
     pub xor_gen: SuccessRate,
     pub num_auxiliary_var: usize,
 
     pub test: SuccessRate,
+}
+
+impl IC3 {
+    pub fn inn_cmp(&self, a: impl Into<Var>, b: impl Into<Var>) -> Ordering {
+        let (a, b) = (a.into(), b.into());
+        self.ts_top_lv[a]
+            .cmp(&self.ts_top_lv[b])
+            .then_with(|| self.activity.cmp(a, b))
+    }
 }

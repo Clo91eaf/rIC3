@@ -1,23 +1,29 @@
 use crate::{
+    gipsat::TransysSolver,
     ic3::{IC3, frame::FrameLemma, mic::MicType},
     transys::TransysIf,
 };
-use logicrs::{LitOrdVec, LitVec};
+use logicrs::{LitOrdVec, LitVec, satif::Satif};
 use rand::seq::SliceRandom;
+use std::time::Instant;
 
 impl IC3 {
     pub fn propagate(&mut self, from: Option<usize>) -> bool {
         let level = self.level();
         let from = from.unwrap_or(self.frame.early).max(1);
         for frame_idx in from..level {
-            self.frame[frame_idx].sort_by_key(|x| x.len());
-            let frame = self.frame[frame_idx].clone();
+            let mut frame = self.frame[frame_idx].clone();
+            frame.sort_by_key(|x| x.len());
             for mut lemma in frame {
                 if self.frame[frame_idx].iter().all(|l| l.ne(&lemma)) {
                     continue;
                 }
                 for ctp in 0..3 {
-                    if self.blocked_with_ordered(frame_idx + 1, &lemma, false) {
+                    if self
+                        .blocked(frame_idx + 1, &lemma)
+                        .with_act_order(false)
+                        .check()
+                    {
                         let core = self.solvers[frame_idx]
                             .inductive_core()
                             .unwrap_or(lemma.as_litvec().clone());
@@ -86,9 +92,9 @@ impl IC3 {
     }
 
     pub fn propagate_to_inf(&mut self) {
-        let level = self.level();
-        self.frame[level].shuffle(&mut self.rng);
-        let mut lastf = self.frame[level].clone();
+        let start = Instant::now();
+        let mut lastf = self.frame.last().clone();
+        lastf.shuffle(&mut self.rng);
         while let Some(mut lemma) = lastf.pop() {
             loop {
                 if self.inf_solver.inductive(&lemma, true) {
@@ -110,5 +116,48 @@ impl IC3 {
                 }
             }
         }
+        self.statistic.propagate.push_inf_time += start.elapsed();
+    }
+
+    pub fn propagate_to_inf2(&mut self) {
+        let start = Instant::now();
+        let iter_max = 7;
+        let mut cand: Vec<_> = self
+            .frame
+            .last()
+            .iter()
+            .map(|l| l.as_litvec().clone())
+            .collect();
+        if cand.is_empty() {
+            return;
+        }
+        for k in 0..=iter_max {
+            if k == iter_max {
+                self.statistic.propagate.push_inf_time += start.elapsed();
+                return;
+            }
+            let mut slv = TransysSolver::new(&self.tsctx);
+            for i in self.frame.inf.iter() {
+                slv.add_clause(&!i.as_litvec());
+            }
+            for c in cand.iter() {
+                slv.add_clause(&!c);
+            }
+            let mut new_cand = Vec::new();
+            for c in cand.iter() {
+                if slv.inductive(c, false) {
+                    new_cand.push(c.clone());
+                }
+            }
+            if new_cand.len() == cand.len() {
+                break;
+            } else {
+                cand = new_cand;
+            }
+        }
+        for c in cand {
+            self.add_inf_lemma(c);
+        }
+        self.statistic.propagate.push_inf_time += start.elapsed();
     }
 }
