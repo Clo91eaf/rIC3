@@ -119,10 +119,10 @@ impl Default for Assign {
 /// The `Literal` struct (fanout_AND_start/end, direct_start/end) is for
 /// circuit-aware propagation (Phase 3) and is deferred to that phase.
 pub struct GateVarMap<T> {
-    data: Vec<T>,
+    data: Vec<Option<T>>,
 }
 
-impl<T: Default> GateVarMap<T> {
+impl<T> GateVarMap<T> {
     pub fn new() -> Self {
         Self { data: Vec::new() }
     }
@@ -133,19 +133,15 @@ impl<T: Default> GateVarMap<T> {
         }
     }
 
-    /// Ensure the map has space for `var`, filling gaps with default values.
     pub fn reserve(&mut self, var: Var) {
         let idx = *var as usize;
         if idx >= self.data.len() {
-            self.data.resize_with(idx + 1, T::default);
+            self.data.resize_with(idx + 1, || None);
         }
     }
 }
 
-impl<T> Default for GateVarMap<T>
-where
-    T: Default,
-{
+impl<T> Default for GateVarMap<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -155,14 +151,20 @@ impl<T> Index<Var> for GateVarMap<T> {
     type Output = T;
     #[inline]
     fn index(&self, index: Var) -> &Self::Output {
-        &self.data[*index as usize]
+        self.data[*index as usize].as_ref().unwrap()
     }
 }
 
 impl<T> IndexMut<Var> for GateVarMap<T> {
     #[inline]
     fn index_mut(&mut self, index: Var) -> &mut Self::Output {
-        &mut self.data[*index as usize]
+        self.data[*index as usize].as_mut().unwrap()
+    }
+}
+
+impl<T> GateVarMap<T> {
+    pub fn set(&mut self, var: Var, val: T) {
+        self.data[*var as usize] = Some(val);
     }
 }
 
@@ -382,6 +384,7 @@ mod tests {
         let mut map = GateVarMap::<Assign>::new();
         let v = Var(5);
         map.reserve(v);
+        map.set(v, Assign::default());
         assert_eq!(map[v].level, 0);
         map[v].level = 3;
         assert_eq!(map[v].level, 3);
