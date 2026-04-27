@@ -15,6 +15,7 @@ pub mod transys;
 pub mod wlbmc;
 pub mod wlkind;
 pub mod wltransys;
+pub mod xsat;
 
 use crate::{
     config::EngineConfig,
