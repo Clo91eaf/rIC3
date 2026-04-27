@@ -1,4 +1,6 @@
-use logicrs::{Lit, Var};
+use giputils::StopCtrl;
+use logicrs::satif::Satif;
+use logicrs::{Lit, LitVec, Var};
 use rand::RngExt;
 
 use super::analyze;
@@ -70,6 +72,9 @@ pub struct Solver {
 
     // --- RNG ---
     pub rng: rand::rngs::StdRng,
+
+    // --- Satif integration ---
+    pub pending_clauses: Vec<Vec<Lit>>,
 }
 
 impl Solver {
@@ -128,6 +133,7 @@ impl Solver {
             reduce_limit_inc: 8192,
 
             rng: rand::make_rng(),
+            pending_clauses: Vec::new(),
         }
     }
 
@@ -442,7 +448,7 @@ impl Solver {
     /// X-SAT: `CSat::solve()` (search.cpp:5-193)
     ///
     /// Returns 10 (SAT) or 20 (UNSAT).
-    pub fn solve(&mut self) -> u32 {
+    pub fn solve_circuit(&mut self) -> u32 {
         self.build_data_structure();
         self.num_gate_clauses = self.clauses.len();
 
@@ -561,6 +567,313 @@ impl Solver {
                     }
                 }
             }
+        }
+    }
+
+    /// CNF-only constructor for Satif integration.
+    pub fn new_cnf() -> Self {
+        Self {
+            num_inputs: 0,
+            num_outputs: 0,
+            num_vars: 0,
+            num_gate_clauses: 0,
+            outputs: Vec::new(),
+            vars: GateVarMap::new(),
+
+            clauses: Vec::new(),
+            watches: Watches::new(2),
+
+            value: LitAssign::new(),
+            assigns: vec![Assign::default()],
+            trail: Vec::new(),
+            propagated: 0,
+            pos_in_trail: Vec::new(),
+
+            branch: Branch::new(0),
+
+            var_inc: 1.0,
+            clause_inc: 1.0,
+            cur_restart: 1,
+            reduce_limit: 8192,
+            reduces: 0,
+            conflicts: 0,
+            rephases: 0,
+            rephase_limit: 1024,
+            threshold: 0,
+            local_best: Vec::new(),
+
+            lbd_queue: [0; 50],
+            lbd_queue_size: 0,
+            lbd_queue_pos: 0,
+            fast_lbd_sum: 0.0,
+            slow_lbd_sum: 0.0,
+
+            enable_elim: false,
+            enable_xvsids: false,
+            reduce_per: 50,
+            reduce_limit_inc: 8192,
+
+            rng: rand::make_rng(),
+            pending_clauses: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.trail.clear();
+        self.propagated = 0;
+        self.pos_in_trail.clear();
+        let n = self.num_vars;
+        self.value = LitAssign::new();
+        self.assigns.clear();
+        self.assigns.push(Assign::default());
+        for v in 1..=n {
+            self.value.reserve_var(Var(v as u32));
+            self.assigns.push(Assign::default());
+        }
+    }
+
+    fn solve_cnf(&mut self, assumps: &[Lit]) -> u32 {
+        self.reset();
+
+        let num_lits = (self.num_vars + 1) * 2;
+        self.watches = Watches::new(num_lits);
+
+        for cref in 0..self.clauses.len() {
+            let cref = CRef::from(cref);
+            let cls = &self.clauses[cref.idx()];
+            if cls.is_deleted {
+                continue;
+            }
+            match cls.data.len() {
+                2 => {
+                    self.watches.add_bin(cls.data[0], cls.data[1]);
+                }
+                3 => {
+                    self.watches.add_tri(cls.data[0], cls.data[1], cref);
+                }
+                _ => {
+                    self.watches.add_gen(cls.data[0], cls.data[1], cref);
+                }
+            }
+        }
+
+        let old_clause_count = self.clauses.len();
+        let pending: Vec<Vec<Lit>> = self.pending_clauses.clone();
+        for lits in &pending {
+            if lits.is_empty() {
+                return 20;
+            }
+            let cref = self.alloc_clause(lits.clone(), false);
+            let cls = &self.clauses[cref.idx()];
+            match cls.data.len() {
+                2 => self.watches.add_bin(cls.data[0], cls.data[1]),
+                3 => self.watches.add_tri(cls.data[0], cls.data[1], cref),
+                _ => {
+                    if cls.data.len() > 3 {
+                        self.watches.add_gen(cls.data[0], cls.data[1], cref);
+                    }
+                }
+            }
+        }
+
+        // Propagate unit clauses
+        for cref_idx in old_clause_count..self.clauses.len() {
+            let cls = &self.clauses[cref_idx];
+            if cls.data.len() == 1 {
+                let lit = cls.data[0];
+                if self.value.val(lit).is_false() {
+                    return 20;
+                }
+                if self.value.val(lit).is_none() {
+                    self.value.assign(lit);
+                    let var = *lit.var() as usize;
+                    self.assigns[var].level = 0;
+                    self.assigns[var].reason = Reason::Output;
+                    self.trail.push(lit);
+                }
+            }
+        }
+
+        self.branch = Branch::new(self.num_vars);
+        self.branch.init_vsids(self.num_vars);
+
+        for &lit in assumps {
+            let level = self.pos_in_trail.len() as u32 + 1;
+            self.pos_in_trail.push(self.trail.len());
+            self.value.assign(lit);
+            let var = *lit.var() as usize;
+            self.assigns[var].level = level;
+            self.assigns[var].reason = Reason::Decision;
+            self.trail.push(lit);
+        }
+
+        loop {
+            let result = propagate::propagate(
+                &mut self.trail,
+                &mut self.propagated,
+                &mut self.watches,
+                &mut self.clauses,
+                &mut self.value,
+                &mut self.assigns,
+            );
+
+            match result {
+                propagate::PropResult::Conflict(conflict) => {
+                    let analyze_result = analyze::analyze(
+                        &conflict,
+                        &self.trail,
+                        &self.assigns,
+                        &self.clauses,
+                        self.num_vars,
+                    );
+
+                    if analyze_result.backtrack_level < 0 {
+                        return 20;
+                    }
+
+                    analyze::backtrack(
+                        analyze_result.backtrack_level as u32,
+                        &mut self.trail,
+                        &mut self.propagated,
+                        &mut self.value,
+                        &mut self.assigns,
+                        &mut self.branch.saved,
+                        &self.pos_in_trail,
+                    );
+
+                    let learn = analyze_result.learn;
+                    let lbd = analyze_result.lbd;
+
+                    self.record_lbd(lbd);
+
+                    if learn.len() == 1 {
+                        self.assign_lit(learn[0], 0, Reason::Output);
+                    } else if learn.len() == 2 {
+                        self.watches.add_bin(learn[0], learn[1]);
+                        self.assign_lit(
+                            learn[0],
+                            analyze_result.backtrack_level as u32,
+                            Reason::Direct(learn[1]),
+                        );
+                    } else {
+                        let cref = self.add_learning_clause(&learn, lbd);
+                        self.bump_clause(cref, 1.0);
+                        self.assign_lit(
+                            learn[0],
+                            analyze_result.backtrack_level as u32,
+                            Reason::Clause(cref),
+                        );
+                    }
+
+                    self.var_inc *= 1.0 / 0.8;
+                    self.clause_inc *= 1.0 / 0.8;
+                    self.reduces += 1;
+                    self.conflicts += 1;
+                    self.rephases += 1;
+                    self.update_local_best();
+                }
+                propagate::PropResult::Ok => {
+                    if self.conflicts >= self.cur_restart * self.reduce_limit {
+                        self.reduce();
+                        self.cur_restart = (self.conflicts / self.reduce_limit) + 1;
+                        self.reduce_limit += self.reduce_limit_inc;
+                    } else if self.lbd_queue_size == 50
+                        && 0.80 * self.fast_lbd_sum / 50.0
+                            > self.slow_lbd_sum / self.conflicts as f64
+                    {
+                        self.restart();
+                    } else if self.rephases >= self.rephase_limit {
+                        self.rephase();
+                    } else {
+                        let decided = self.branch.decide(
+                            &mut self.value,
+                            &self.vars,
+                            &self.clauses,
+                            &mut self.trail,
+                            &mut self.assigns,
+                        );
+                        if decided.is_none() {
+                            return 10;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct XsatStopCtrl {
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl StopCtrl for XsatStopCtrl {
+    fn stop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Satif for Solver {
+    #[inline]
+    fn new_var(&mut self) -> Var {
+        self.num_vars += 1;
+        let var = Var::new(self.num_vars);
+        self.value.reserve_var(var);
+        self.assigns.push(Assign::default());
+        self.local_best.push(0);
+        self.branch.var_activity.push(0.0);
+        self.branch.gate_activity.push(0.0);
+        self.branch.saved.push(0);
+        self.branch.injheap.push(false);
+        let num_lits = (self.num_vars + 1) * 2;
+        self.watches.ensure_size(num_lits);
+        Var::new(self.num_vars - 1)
+    }
+
+    #[inline]
+    fn num_var(&self) -> usize {
+        self.num_vars
+    }
+
+    fn add_clause(&mut self, clause: &[Lit]) {
+        if clause.is_empty() {
+            return;
+        }
+        self.pending_clauses.push(clause.to_vec());
+    }
+
+    fn solve(&mut self, assumps: &[Lit]) -> bool {
+        self.solve_cnf(assumps) == 10
+    }
+
+    fn solve_with_constraint(&mut self, assumps: &[Lit], constraint: Vec<LitVec>) -> bool {
+        // Add constraint clauses temporarily
+        let start = self.pending_clauses.len();
+        for c in &constraint {
+            for &lit in c.iter() {
+                self.pending_clauses.push(vec![lit]);
+            }
+        }
+        // Actually, constraint is a conjunction of clauses
+        // Each LitVec in constraint is a clause
+        // Clear and re-add properly
+        self.pending_clauses.truncate(start);
+        for c in &constraint {
+            self.pending_clauses.push(c.iter().copied().collect());
+        }
+
+        let result = self.solve_cnf(assumps) == 10;
+
+        // Remove constraint clauses
+        self.pending_clauses.truncate(start);
+        result
+    }
+
+    #[inline]
+    fn sat_value(&self, lit: Lit) -> Option<bool> {
+        match self.value.val(lit) {
+            super::gate::TriVal::True => Some(true),
+            super::gate::TriVal::False => Some(false),
+            super::gate::TriVal::None => None,
         }
     }
 }
@@ -689,7 +1002,7 @@ mod tests {
         let circuit = make_simple_circuit();
         let mut solver = Solver::new(circuit);
 
-        let result = solver.solve();
+        let result = solver.solve_circuit();
         // AND(v1, v2) with output=true should be SAT (both inputs set true)
         assert_eq!(result, 10);
     }
@@ -702,5 +1015,55 @@ mod tests {
         solver.record_lbd(5);
         assert_eq!(solver.lbd_queue_size, 1);
         assert_eq!(solver.fast_lbd_sum, 5.0);
+    }
+
+    #[test]
+    fn test_satif_simple_sat() {
+        use logicrs::satif::Satif;
+
+        let mut solver = Solver::new_cnf();
+        let v0 = solver.new_var();
+        let v1 = solver.new_var();
+
+        // clause: (v0 ∨ v1)
+        solver.add_clause(&[v0.lit(), v1.lit()]);
+
+        let sat = solver.solve(&[v0.lit(), v1.lit()]);
+        assert!(sat);
+        assert_eq!(solver.sat_value(v0.lit()), Some(true));
+        assert_eq!(solver.sat_value(v1.lit()), Some(true));
+    }
+
+    #[test]
+    fn test_satif_simple_unsat() {
+        use logicrs::satif::Satif;
+
+        let mut solver = Solver::new_cnf();
+        let v0 = solver.new_var();
+
+        // clauses: (v0) and (~v0)
+        solver.add_clause(&[v0.lit()]);
+        solver.add_clause(&[!v0.lit()]);
+
+        let sat = solver.solve(&[]);
+        assert!(!sat);
+    }
+
+    #[test]
+    fn test_satif_implication() {
+        use logicrs::satif::Satif;
+
+        let mut solver = Solver::new_cnf();
+        let v0 = solver.new_var();
+        let v1 = solver.new_var();
+
+        // clause: (~v0 ∨ v1) — v0 implies v1
+        solver.add_clause(&[!v0.lit(), v1.lit()]);
+
+        // solve with v0=true, should propagate v1=true
+        let sat = solver.solve(&[v0.lit()]);
+        assert!(sat);
+        assert_eq!(solver.sat_value(v0.lit()), Some(true));
+        assert_eq!(solver.sat_value(v1.lit()), Some(true));
     }
 }
