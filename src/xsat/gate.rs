@@ -93,6 +93,7 @@ pub enum Reason {
 ///
 /// Each variable stores its decision level and the reason for its assignment.
 /// X-SAT: `assigned[var].level` and `assigned[var].reason`
+#[derive(Clone)]
 pub struct Assign {
     pub level: u32,
     pub reason: Reason,

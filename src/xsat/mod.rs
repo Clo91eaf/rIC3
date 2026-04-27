@@ -1,5 +1,9 @@
+pub mod analyze;
+pub mod branch;
 pub mod clause;
 pub mod gate;
+pub mod heap;
 pub mod parse;
 pub mod propagate;
+pub mod solver;
 pub mod watch;

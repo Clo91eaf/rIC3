@@ -50,6 +50,7 @@ impl From<usize> for VRef {
 ///   is_learn   → Clause::learn      — whether this is a conflict-learned clause
 ///   vref       → Clause::vref       — LUT gate mapping during preprocessing (Phase 7)
 ///   data       → Clause::data[]     — the literal array
+#[derive(Clone)]
 pub struct Clause {
     pub lbd: u32,
     pub activity: f64,
