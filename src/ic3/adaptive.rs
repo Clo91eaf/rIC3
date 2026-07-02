@@ -53,7 +53,9 @@ impl MicAdaptive {
         Self {
             window,
             arms: [ArmStat::default(); 2],
-            active: 0,
+            // start thorough (= classic minimize-to-fixpoint): short runs never
+            // see a window boundary, so the default must be baseline behavior
+            active: 1,
             window_start: Instant::now(),
             depth_at_window_start: 0,
             windows: 0,
