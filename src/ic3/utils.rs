@@ -28,6 +28,7 @@ pub struct Statistic {
     pub avg_mic_cube_len: Average,
     pub avg_po_cube_len: Average,
     pub mic_drop: SuccessRate,
+    pub mic_early_stop: usize,
     pub num_down: usize,
     pub num_down_sat: usize,
 

@@ -235,9 +235,19 @@ impl IC3 {
             let parent = GHashSet::from_iter(parent);
             cube.sort_by_key(|x| parent.contains(x));
         }
+        let depth = self.solvers.len() - 1;
+        let fail_limit = match self.mic_adaptive.as_mut() {
+            Some(ada) => ada.decide(depth),
+            None => self.cfg.mic_fail_limit,
+        };
+        let mut consecutive_fails = 0;
         let mut keep = GHashSet::new();
         let mut i = 0;
         while i < cube.len() {
+            if fail_limit > 0 && consecutive_fails >= fail_limit {
+                self.statistic.mic_early_stop += 1;
+                break;
+            }
             if keep.contains(&cube[i]) {
                 i += 1;
                 continue;
@@ -251,6 +261,7 @@ impl IC3 {
             };
             if let Some(new_cube) = mic {
                 self.statistic.mic_drop.success();
+                consecutive_fails = 0;
                 (cube, i) = self.handle_down_success(frame, cube, i, new_cube);
                 if parameter.level == 0 {
                     self.solvers[frame - 1].unset_domain();
@@ -264,6 +275,7 @@ impl IC3 {
                 }
             } else {
                 self.statistic.mic_drop.fail();
+                consecutive_fails += 1;
                 keep.insert(cube[i]);
                 i += 1;
             }

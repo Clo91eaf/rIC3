@@ -24,6 +24,7 @@ use std::{ops::Deref, sync::Arc, time::Instant};
 use utils::Statistic;
 
 mod activity;
+mod adaptive;
 mod auxv;
 mod block;
 mod frame;
@@ -76,6 +77,18 @@ pub struct IC3Config {
     /// counterexample to propagation
     #[arg(long = "ctp", default_value_t = false)]
     pub ctp: bool,
+
+    /// stop mic after this many consecutive failed drops (0 = minimize to fixpoint)
+    #[arg(long = "mic-fail-limit", default_value_t = 0)]
+    pub mic_fail_limit: usize,
+
+    /// online adaptive control of mic minimization degree
+    #[arg(long = "mic-adaptive", default_value_t = false)]
+    pub mic_adaptive: bool,
+
+    /// window (seconds) of the mic-adaptive controller
+    #[arg(long = "mic-adaptive-window", default_value_t = 0.3)]
+    pub mic_adaptive_window: f64,
 
     /// internal signals (FMCAD'21 https://doi.org/10.34727/2021/isbn.978-3-85448-046-4_14)
     #[arg(long = "inn", default_value_t = false)]
@@ -183,6 +196,7 @@ pub struct IC3 {
     auxiliary_var: Vec<Var>,
     predprop: Option<PredProp>,
     mab: mab::CtxMab,
+    mic_adaptive: Option<adaptive::MicAdaptive>,
 
     rng: StdRng,
     filog: IntervalLogger,
@@ -269,6 +283,11 @@ impl IC3 {
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
         let mab = mab::CtxMab::new(cfg.mab_alpha, cfg.mab_lambda);
+        let mic_adaptive = cfg.mic_adaptive.then(|| {
+            adaptive::MicAdaptive::new(std::time::Duration::from_secs_f64(
+                cfg.mic_adaptive_window,
+            ))
+        });
         Self {
             cfg,
             ts,
@@ -288,6 +307,7 @@ impl IC3 {
             rst,
             predprop,
             mab,
+            mic_adaptive,
             rng,
             filog: Default::default(),
             tracer: Tracer::new(),
@@ -393,6 +413,12 @@ impl Engine for IC3 {
             });
         info!("{statistic:#?}");
         info!("{:#?}", self.statistic);
+        if let Some(ada) = self.mic_adaptive.as_ref() {
+            info!(
+                "mic-adaptive windows played: aggressive {}, thorough {}",
+                ada.played[0], ada.played[1]
+            );
+        }
     }
 
     fn get_ctrl(&self) -> Arc<dyn TerminateCtrl> {
