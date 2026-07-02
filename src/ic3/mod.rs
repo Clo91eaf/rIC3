@@ -197,6 +197,7 @@ pub struct IC3 {
     predprop: Option<PredProp>,
     mab: mab::CtxMab,
     mic_adaptive: Option<adaptive::MicAdaptive>,
+    in_propagate: bool,
 
     rng: StdRng,
     filog: IntervalLogger,
@@ -308,6 +309,7 @@ impl IC3 {
             predprop,
             mab,
             mic_adaptive,
+            in_propagate: false,
             rng,
             filog: Default::default(),
             tracer: Tracer::new(),

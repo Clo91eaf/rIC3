@@ -9,6 +9,13 @@ use std::time::Instant;
 
 impl IC3 {
     pub fn propagate(&mut self, from: Option<usize>) -> bool {
+        self.in_propagate = true;
+        let r = self.propagate_inner(from);
+        self.in_propagate = false;
+        r
+    }
+
+    fn propagate_inner(&mut self, from: Option<usize>) -> bool {
         let level = self.level();
         let from = from.unwrap_or(self.frame.early).max(1);
         for frame_idx in from..level {

@@ -235,10 +235,18 @@ impl IC3 {
             let parent = GHashSet::from_iter(parent);
             cube.sort_by_key(|x| parent.contains(x));
         }
+        // Early stopping only applies to blocking-phase mics: propagation-phase
+        // mics (CTP repair) exist to produce a lemma strong enough to unblock
+        // propagation, and truncating them defeats the repair while its cost
+        // (repeated CTP rounds) remains.
         let depth = self.solvers.len() - 1;
-        let fail_limit = match self.mic_adaptive.as_mut() {
-            Some(ada) => ada.decide(depth),
-            None => self.cfg.mic_fail_limit,
+        let fail_limit = if self.in_propagate {
+            0
+        } else {
+            match self.mic_adaptive.as_mut() {
+                Some(ada) => ada.decide(depth),
+                None => self.cfg.mic_fail_limit,
+            }
         };
         let mut consecutive_fails = 0;
         let mut keep = GHashSet::new();
