@@ -238,11 +238,32 @@ impl IC3 {
         } else {
             None
         };
+        // Predictor: order the cube most-droppable first (skipping happens in
+        // the loop). Applied after the activity/parent sorts, so it dominates.
+        let depth = self.solvers.len() - 1;
+        if let Some(pred) = self.mic_predict.as_ref() {
+            let mut scored: Vec<(f64, Lit)> = cube
+                .iter()
+                .map(|&l| {
+                    let inp = parent.as_ref().is_some_and(|p| p.contains(&l));
+                    let p = pred.predict(
+                        l,
+                        self.activity.value(l.var()),
+                        cube.len(),
+                        frame,
+                        depth,
+                        inp,
+                    );
+                    (p, l)
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            cube = LitVec::from_iter(scored.into_iter().map(|x| x.1));
+        }
         // Early stopping only applies to blocking-phase mics: propagation-phase
         // mics (CTP repair) exist to produce a lemma strong enough to unblock
         // propagation, and truncating them defeats the repair while its cost
         // (repeated CTP rounds) remains.
-        let depth = self.solvers.len() - 1;
         let fail_limit = if self.in_propagate {
             0
         } else {
@@ -263,6 +284,27 @@ impl IC3 {
                 i += 1;
                 continue;
             }
+            // predictor skip: below-threshold attempts are not tried at all;
+            // the literal is kept (sound — the lemma just stays larger)
+            if let Some(pred) = self.mic_predict.as_ref() {
+                let lit = cube[i];
+                let inp = parent.as_ref().is_some_and(|p| p.contains(&lit));
+                let p = pred.predict(
+                    lit,
+                    self.activity.value(lit.var()),
+                    cube.len(),
+                    frame,
+                    depth,
+                    inp,
+                );
+                if p < pred.threshold {
+                    self.statistic.mic_predict_skip += 1;
+                    keep.insert(lit);
+                    i += 1;
+                    continue;
+                }
+            }
+            let tried_lit = cube[i];
             let mut removed_cube = cube.clone();
             removed_cube.remove(i);
             // features of this drop attempt, captured before the query
@@ -300,6 +342,9 @@ impl IC3 {
                     mic.is_some() as u8
                 );
                 self.drop_log_lines += 1;
+            }
+            if let Some(pred) = self.mic_predict.as_mut() {
+                pred.record(tried_lit.var(), mic.is_some());
             }
             if let Some(new_cube) = mic {
                 self.statistic.mic_drop.success();

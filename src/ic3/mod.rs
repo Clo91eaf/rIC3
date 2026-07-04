@@ -26,6 +26,7 @@ use utils::Statistic;
 mod activity;
 mod adaptive;
 mod auxv;
+mod predict;
 mod block;
 mod frame;
 mod localabs;
@@ -89,6 +90,14 @@ pub struct IC3Config {
     /// window (seconds) of the mic-adaptive controller
     #[arg(long = "mic-adaptive-window", default_value_t = 0.3)]
     pub mic_adaptive_window: f64,
+
+    /// predict per-drop success: order cube most-droppable first, skip attempts below threshold
+    #[arg(long = "mic-predict", default_value_t = false)]
+    pub mic_predict: bool,
+
+    /// skip threshold of the mic drop predictor
+    #[arg(long = "mic-predict-threshold", default_value_t = 0.0323)]
+    pub mic_predict_threshold: f64,
 
     /// internal signals (FMCAD'21 https://doi.org/10.34727/2021/isbn.978-3-85448-046-4_14)
     #[arg(long = "inn", default_value_t = false)]
@@ -197,6 +206,7 @@ pub struct IC3 {
     predprop: Option<PredProp>,
     mab: mab::CtxMab,
     mic_adaptive: Option<adaptive::MicAdaptive>,
+    mic_predict: Option<predict::DropPredictor>,
     in_propagate: bool,
     /// per-drop-attempt feature log (enabled via MIC_DROP_LOG=<path>)
     drop_log: Option<std::io::BufWriter<std::fs::File>>,
@@ -292,6 +302,9 @@ impl IC3 {
                 cfg.mic_adaptive_window,
             ))
         });
+        let mic_predict = cfg
+            .mic_predict
+            .then(|| predict::DropPredictor::new(cfg.mic_predict_threshold));
         Self {
             cfg,
             ts,
@@ -312,6 +325,7 @@ impl IC3 {
             predprop,
             mab,
             mic_adaptive,
+            mic_predict,
             in_propagate: false,
             drop_log: std::env::var("MIC_DROP_LOG")
                 .ok()
