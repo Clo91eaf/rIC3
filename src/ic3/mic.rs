@@ -229,12 +229,15 @@ impl IC3 {
         } else {
             self.activity.sort_by_activity(&mut cube, true);
         }
-        if self.cfg.parent_lemma
+        let parent: Option<GHashSet<Lit>> = if self.cfg.parent_lemma
             && let Some(parent) = self.frame.parent_lemma(&cube, frame)
         {
             let parent = GHashSet::from_iter(parent);
             cube.sort_by_key(|x| parent.contains(x));
-        }
+            Some(parent)
+        } else {
+            None
+        };
         // Early stopping only applies to blocking-phase mics: propagation-phase
         // mics (CTP repair) exist to produce a lemma strong enough to unblock
         // propagation, and truncating them defeats the repair while its cost
@@ -262,11 +265,42 @@ impl IC3 {
             }
             let mut removed_cube = cube.clone();
             removed_cube.remove(i);
+            // features of this drop attempt, captured before the query
+            let log_feat = (self.drop_log.is_some() && self.drop_log_lines < 3_000_000).then(|| {
+                let lit = cube[i];
+                (
+                    lit,
+                    self.activity.value(lit.var()),
+                    i,
+                    cube.len(),
+                    frame,
+                    self.solvers.len() - 1,
+                    parent.as_ref().is_some_and(|p| p.contains(&lit)),
+                )
+            });
             let mic = if parameter.level == 0 {
                 self.down(frame, &removed_cube, &keep, &cube, constraint, &mut cex)
             } else {
                 self.ctg_down(frame, &removed_cube, &keep, &cube, parameter)
             };
+            if let Some((lit, act, pos, len, fr, lv, inp)) = log_feat
+                && let Some(w) = self.drop_log.as_mut()
+            {
+                use std::io::Write;
+                let _ = writeln!(
+                    w,
+                    "{},{:.6},{},{},{},{},{},{}",
+                    lit,
+                    act,
+                    pos,
+                    len,
+                    fr,
+                    lv,
+                    inp as u8,
+                    mic.is_some() as u8
+                );
+                self.drop_log_lines += 1;
+            }
             if let Some(new_cube) = mic {
                 self.statistic.mic_drop.success();
                 consecutive_fails = 0;

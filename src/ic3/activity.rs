@@ -42,6 +42,13 @@ impl Activity {
         self.activity[var] = self.max_act;
     }
 
+    /// activity normalized to [0, 1] by the current maximum
+    #[inline]
+    pub fn value(&self, var: impl Into<Var>) -> f64 {
+        let v = self.activity[var.into()];
+        if self.max_act > 0.0 { v / self.max_act } else { 0.0 }
+    }
+
     #[inline]
     pub fn decay(&mut self) {
         self.act_inc *= 1.0 / 0.9

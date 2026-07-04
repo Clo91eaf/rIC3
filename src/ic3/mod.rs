@@ -198,6 +198,9 @@ pub struct IC3 {
     mab: mab::CtxMab,
     mic_adaptive: Option<adaptive::MicAdaptive>,
     in_propagate: bool,
+    /// per-drop-attempt feature log (enabled via MIC_DROP_LOG=<path>)
+    drop_log: Option<std::io::BufWriter<std::fs::File>>,
+    drop_log_lines: usize,
 
     rng: StdRng,
     filog: IntervalLogger,
@@ -310,6 +313,11 @@ impl IC3 {
             mab,
             mic_adaptive,
             in_propagate: false,
+            drop_log: std::env::var("MIC_DROP_LOG")
+                .ok()
+                .and_then(|p| std::fs::File::create(p).ok())
+                .map(std::io::BufWriter::new),
+            drop_log_lines: 0,
             rng,
             filog: Default::default(),
             tracer: Tracer::new(),
