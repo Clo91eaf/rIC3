@@ -22,6 +22,10 @@ pub struct SolverStatistic {
     pub avg_ilb_reuse_unc: Average,
     /// constrained (mic-style) fast solves
     pub num_ilb_con: usize,
+    /// flip-undo entries replayed before reuse
+    pub num_flip_replay: usize,
+    /// total time spent restoring trail coherence
+    pub restore_time: std::time::Duration,
     /// clamp events: kept ¬act assignment below the shared prefix
     pub num_ilb_clamp_act: usize,
     /// clamp events: locked temporary clause below the shared prefix
@@ -42,6 +46,8 @@ impl AddAssign for SolverStatistic {
         self.avg_ilb_frac_con += rhs.avg_ilb_frac_con;
         self.avg_ilb_reuse_unc += rhs.avg_ilb_reuse_unc;
         self.num_ilb_con += rhs.num_ilb_con;
+        self.num_flip_replay += rhs.num_flip_replay;
+        self.restore_time += rhs.restore_time;
         self.num_ilb_clamp_act += rhs.num_ilb_clamp_act;
         self.num_ilb_clamp_locked += rhs.num_ilb_clamp_locked;
     }

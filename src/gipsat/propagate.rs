@@ -67,6 +67,25 @@ impl DagCnfSolver {
                 }
                 let cid = unsafe { (*wtrs_p_dat.add(w)).clause };
                 let mut cref = self.cdb.get(cid);
+                // never let a temporary clause propagate at level 0: the
+                // assignment would outlive the clause (level 0 is never
+                // backtracked) and conflict analysis treats level-0 literals
+                // as globally valid, laundering constraint-scoped deductions
+                // into permanent state. A unit is safely deferred (its literal
+                // is in the decision domain, so falsification at level > 0
+                // re-triggers the watch), but an all-false clause must still
+                // report the conflict here — its watches are both falsified at
+                // level 0 and would never fire again.
+                if cref.is_temp() {
+                    if cref.slice().iter().all(|l| self.value.v(*l).is_false()) {
+                        unsafe {
+                            (*wtrs_p_vec).set_len(wtrs_p_len);
+                        }
+                        return cid;
+                    }
+                    w += 1;
+                    continue;
+                }
                 if cref[0] == !p {
                     cref.swap(0, 1);
                 }
@@ -184,6 +203,11 @@ impl DagCnfSolver {
     }
 
     pub(super) fn flip_to_none_inner(&mut self, var: Var) -> bool {
+        if self.model_from_fast {
+            // conservative shrinking on fast-path models: report assigned
+            // variables as required (callers simply keep them — sound)
+            return self.value.v(var.lit()).is_none();
+        }
         if self.level[var] == 0 {
             return false;
         }
@@ -199,13 +223,20 @@ impl DagCnfSolver {
             let watchers = &mut self.watchers.wtrs[!l];
             let cid = watchers[w].clause;
             let mut cref = self.cdb.get(cid);
+            // record pre-mutation watch pairs (only when actually mutated) so
+            // a reused trail can undo the watch damage of model shrinking
+            let orig = [cref[0], cref[1]];
+            let mut logged = false;
             if cref[0] == l {
+                self.flip_undo.push((cid, orig));
+                logged = true;
                 cref.swap(0, 1);
             }
             debug_assert!(cref[1] == l);
             let new_watcher = Watcher::new(cid, cref[0]);
             let v = self.value.v(cref[0]);
             if v == Lbool::TRUE || (v != Lbool::FALSE && !self.domain.has(cref[0].var())) {
+                let watchers = &mut self.watchers.wtrs[!l];
                 watchers[w].blocker = cref[0];
                 w += 1;
                 continue;
@@ -214,7 +245,11 @@ impl DagCnfSolver {
                 let lit = cref[i];
                 let v = self.value.v(lit);
                 if v.is_true() || (v.is_none() && !self.domain.has(lit.var())) {
+                    if !logged {
+                        self.flip_undo.push((cid, orig));
+                    }
                     cref.swap(1, i);
+                    let watchers = &mut self.watchers.wtrs[!l];
                     watchers.swap_remove(w);
                     self.watchers.wtrs[!cref[1]].push(new_watcher);
                     continue 'next_cls;

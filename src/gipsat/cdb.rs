@@ -18,7 +18,11 @@ struct Header {
     reloced: bool,
     marked: bool,
     removed: bool,
-    #[bits(27)]
+    /// temporary (constraint-scoped) clause: must never propagate at level 0,
+    /// since level-0 assignments outlive the clause and conflict analysis
+    /// treats them as globally valid
+    temp: bool,
+    #[bits(26)]
     len: usize,
 }
 
@@ -51,6 +55,11 @@ impl Clause {
     #[inline]
     pub fn is_learnt(&self) -> bool {
         unsafe { (*self.data).header.learnt() }
+    }
+
+    #[inline]
+    pub fn is_temp(&self) -> bool {
+        unsafe { (*self.data).header.temp() }
     }
 
     #[inline]
@@ -175,7 +184,7 @@ impl Allocator {
     }
 
     #[inline]
-    fn alloc(&mut self, clause: &[Lit], trans: bool, learnt: bool) -> CRef {
+    fn alloc(&mut self, clause: &[Lit], trans: bool, learnt: bool, temp: bool) -> CRef {
         debug_assert!(!(trans && learnt));
         let cid = self.data.len();
         let mut additional = clause.len() + 1;
@@ -187,7 +196,8 @@ impl Allocator {
         self.data[cid].header = Header::new()
             .with_len(clause.len())
             .with_trans(trans)
-            .with_learnt(learnt);
+            .with_learnt(learnt)
+            .with_temp(temp);
         for (i, lit) in clause.iter().enumerate() {
             self.data[cid + 1 + i].lit = *lit;
         }
@@ -270,6 +280,7 @@ impl ClauseDB {
             clause,
             matches!(kind, ClauseKind::Trans),
             matches!(kind, ClauseKind::Learnt),
+            matches!(kind, ClauseKind::Temporary),
         );
         match kind {
             ClauseKind::Trans => self.trans.push(cid),

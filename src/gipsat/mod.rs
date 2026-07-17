@@ -77,6 +77,15 @@ pub struct DagCnfSolver {
     /// constraint activation variable: the learnt then depends on this
     /// round's temporary clauses and must not outlive them
     saw_act_resolution: bool,
+    /// watch pairs mutated by model shrinking (flip_to_none) since the last
+    /// solve. Master re-propagates from scratch each solve, so mutated
+    /// watches are harmless there; a reused trail keeps values whose watch
+    /// structure these mutations broke — replayed in reverse before reuse
+    pub(crate) flip_undo: Vec<(CRef, [Lit; 2])>,
+    /// the current model came from a fast-path (trail-reusing) solve: model
+    /// shrinking must be conservative, since flip feasibility reasoning
+    /// assumes a watch structure established by a from-scratch propagation
+    model_from_fast: bool,
 
     statistic: SolverStatistic,
 }
@@ -125,6 +134,8 @@ impl DagCnfSolver {
             ilb: std::env::var("GIPSAT_ILB").map(|v| v != "0").unwrap_or(true),
             ilb_sat: std::env::var("GIPSAT_ILB_SAT").map(|v| v != "0").unwrap_or(true),
             ilb_check: std::env::var("GIPSAT_ILB_CHECK").map(|v| v != "0").unwrap_or(false),
+            flip_undo: Vec::new(),
+            model_from_fast: false,
             last_assump: None,
             last_res: None,
             saw_act_resolution: false,
@@ -272,11 +283,33 @@ impl DagCnfSolver {
     /// literal sits at index 0 — which conflict analysis relies on. Reusing a
     /// trail without repairing both would let analyze derive unsound learnts.
     fn restore_trail_coherence(&mut self) {
+        let start = Instant::now();
+        self.statistic.num_flip_replay += self.flip_undo.len();
         for i in 0..self.trail.len() {
             let p = self.trail[i];
             if self.value.v(p).is_none() {
                 self.value.set(p);
             }
+        }
+        // undo watch mutations from model shrinking, newest first, so the
+        // watch structure again matches the (restored) propagation fixpoint
+        while let Some((cid, w)) = self.flip_undo.pop() {
+            let c = self.cdb.get(cid);
+            if c.is_removed() {
+                continue;
+            }
+            self.watchers.detach(cid, c);
+            let mut c = self.cdb.get(cid);
+            let p0 = (0..c.len()).find(|&j| c[j] == w[0]).unwrap();
+            c.swap(0, p0);
+            let p1 = (1..c.len()).find(|&j| c[j] == w[1]).unwrap();
+            c.swap(1, p1);
+            self.watchers.attach(cid, c);
+        }
+        // belt and braces: conflict analysis requires reason[0] == the
+        // propagated literal
+        for i in 0..self.trail.len() {
+            let p = self.trail[i];
             let r = self.reason[p];
             if r != CREF_NONE {
                 let c = self.cdb.get(r);
@@ -289,6 +322,7 @@ impl DagCnfSolver {
                 }
             }
         }
+        self.statistic.restore_time += start.elapsed();
     }
 
     /// Detach this round's temporary clauses. Unlike `clean_temporary`, this
@@ -368,10 +402,11 @@ impl DagCnfSolver {
         bucket: bool,
     ) -> bool {
         if self.ilb && self.ilb_sat && self.last_res == Some(true) {
-            // model shrinking may have decoupled values/reasons from the
-            // trail; restore coherence before deciding on (and using) reuse
+            // model shrinking may have decoupled values/reasons/watches from
+            // the trail; restore coherence before deciding on (and using) reuse
             self.restore_trail_coherence();
         }
+        self.flip_undo.clear();
         let target = self.ilb_target(assumption);
         if target == 0 {
             // ----- full reset (original) path -----
@@ -428,6 +463,30 @@ impl DagCnfSolver {
             self.domain.insert(self.constrain_act);
             self.vsids.enable_bucket = true;
             self.vsids.bucket.clear();
+            if std::env::var("GIPSAT_ILB_AUDIT").is_ok() {
+                for i in 0..self.trail.len() {
+                    let p = self.trail[i];
+                    assert!(self.value.v(p).is_true(), "kept trail lit {p:?} not true");
+                    // level-0 reasons are never dereferenced (analysis skips
+                    // level-0 literals) and may legitimately dangle
+                    if self.level[p] == 0 {
+                        continue;
+                    }
+                    let r = self.reason[p];
+                    if r != CREF_NONE {
+                        let c = self.cdb.get(r);
+                        assert!(c[0] == p, "kept reason[0] != lit for {p:?}");
+                        assert!(!c.is_removed(), "kept reason removed for {p:?}");
+                        for j in 1..c.len() {
+                            assert!(
+                                self.value.v(c[j]).is_false(),
+                                "kept reason of {p:?} has non-false lit {:?} at {j}",
+                                c[j]
+                            );
+                        }
+                    }
+                }
+            }
         }
         let free = self.dc.num_var().saturating_sub(self.trail.len());
         if free > 0 {
@@ -483,6 +542,15 @@ impl DagCnfSolver {
             self.simplify();
         }
         let mut res = self.search_with_restart(&assumption, limit);
+        if res == Some(true)
+            && self.statistic.num_ilb > num_ilb_before
+            && std::env::var("GIPSAT_ILB_VERIFY").is_ok()
+        {
+            assert!(
+                self.verify(&assumption),
+                "ILB fast-path SAT model failed verification"
+            );
+        }
         if self.ilb_check && self.statistic.num_ilb > num_ilb_before {
             // re-solve from scratch and compare: the clause database now also
             // holds the fast solve's learnts, but that cannot change the answer
@@ -509,6 +577,7 @@ impl DagCnfSolver {
         }
         self.last_assump = Some(assumption);
         self.last_res = res;
+        self.model_from_fast = res == Some(true) && self.statistic.num_ilb > num_ilb_before;
         self.statistic.avg_solve_time += start.elapsed();
         res
     }
