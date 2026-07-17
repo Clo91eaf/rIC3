@@ -89,12 +89,25 @@ impl DagCnfSolver {
                     return Some(false);
                 }
                 let (learnt, btl) = self.analyze(conflict);
+                // a derivation that resolved through the activation variable
+                // depends on this round's temporary clauses and must not
+                // outlive them
+                let temp_derived = std::mem::take(&mut self.saw_act_resolution);
                 self.backtrack(btl, true);
                 if learnt.len() == 1 {
                     debug_assert!(btl == 0);
-                    self.assign(learnt[0], CREF_NONE);
+                    if temp_derived {
+                        // sound as (learnt ∨ ¬act): re-fires via propagation
+                        // once act is assumed, and dies with the temporaries
+                        let cls = [learnt[0], !self.constrain_act.lit()];
+                        self.attach_clause(&cls, ClauseKind::Temporary);
+                    } else {
+                        self.assign(learnt[0], CREF_NONE);
+                    }
                 } else {
-                    let kind = if learnt.iter().any(|l| self.constrain_act == l.var()) {
+                    let kind = if temp_derived
+                        || learnt.iter().any(|l| self.constrain_act == l.var())
+                    {
                         ClauseKind::Temporary
                     } else {
                         ClauseKind::Learnt

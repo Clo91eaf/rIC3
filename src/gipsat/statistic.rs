@@ -8,6 +8,10 @@ pub struct SolverStatistic {
     pub avg_decide_var: Average,
     pub num_simplify_subsume: usize,
     pub num_simplify_self_subsume: usize,
+    /// solves that reused a trail prefix from the previous solve (ILB)
+    pub num_ilb: usize,
+    /// average number of reused decision levels on ILB solves
+    pub avg_ilb_reuse: Average,
 }
 
 impl AddAssign for SolverStatistic {
@@ -17,5 +21,7 @@ impl AddAssign for SolverStatistic {
         self.avg_decide_var += rhs.avg_decide_var;
         self.num_simplify_subsume += rhs.num_simplify_subsume;
         self.num_simplify_self_subsume += rhs.num_simplify_self_subsume;
+        self.num_ilb += rhs.num_ilb;
+        self.avg_ilb_reuse += rhs.avg_ilb_reuse;
     }
 }

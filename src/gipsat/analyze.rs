@@ -71,6 +71,11 @@ impl DagCnfSolver {
         if self.reason[lit] == CREF_NONE {
             return false;
         }
+        // never minimize through the activation variable: its reason is a
+        // temporary clause, which would hide the learnt's dependency on it
+        if lit.var() == self.constrain_act {
+            return false;
+        }
         let mut stack: Vec<(Lit, usize)> = vec![(lit, 1)];
         'a: while let Some((p, b)) = stack.pop() {
             let c = self.cdb.get(self.reason[p]);
@@ -79,7 +84,9 @@ impl DagCnfSolver {
                 if self.level[l] == 0 || matches!(self.analyze[l], Mark::Seen | Mark::Removable) {
                     continue;
                 }
-                if self.reason[l] == CREF_NONE || matches!(self.analyze[l], Mark::Failed) {
+                if self.reason[l] == CREF_NONE
+                    || l.var() == self.constrain_act
+                    || matches!(self.analyze[l], Mark::Failed) {
                     stack.push((p, 0));
                     for (l, _) in stack {
                         if matches!(self.analyze[l], Mark::Unseen) {
@@ -142,6 +149,11 @@ impl DagCnfSolver {
             path -= 1;
             if path == 0 {
                 break;
+            }
+            if self.trail[trail_idx].var() == self.constrain_act {
+                // resolving through ¬act pulls in temporary-clause literals:
+                // the resulting learnt depends on this round's constraints
+                self.saw_act_resolution = true;
             }
             conflict = self.reason[self.trail[trail_idx]];
         }
