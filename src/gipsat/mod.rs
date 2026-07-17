@@ -198,7 +198,7 @@ impl DagCnfSolver {
 
     /// Length of the trail-prefix (in decision levels) reusable from the
     /// previous solve, or 0 if the fast path does not apply.
-    fn ilb_target(&self, assumption: &LitVec) -> usize {
+    fn ilb_target(&mut self, assumption: &LitVec) -> usize {
         if !self.ilb
             || self.temporary_domain
             || self.last_res.is_none()
@@ -230,17 +230,20 @@ impl DagCnfSolver {
         while target > 0 && assumption[target - 1].var() == self.constrain_act {
             target -= 1;
         }
+        let prefix = target;
         // the previous round may have propagated ¬act below the target through
         // a temporary clause; those levels cannot be kept
         if target > 0 && !self.value.v(self.constrain_act.lit()).is_none() {
             let la = self.level[self.constrain_act] as usize;
             if la <= target {
                 target = la.saturating_sub(1);
+                self.statistic.num_ilb_clamp_act += 1;
             }
         }
         // temporary clauses (including act-free learnts quarantined by
         // saw_act_resolution) may be reasons of kept literals; clamp below any
         // such assignment so detaching them leaves no dangling reason
+        let mut clamped_locked = false;
         for &t in self.cdb.temporary.iter() {
             if target == 0 {
                 break;
@@ -249,8 +252,15 @@ impl DagCnfSolver {
                 let lv = self.level[self.cdb.get(t)[0]] as usize;
                 if lv <= target {
                     target = lv.saturating_sub(1);
+                    clamped_locked = true;
                 }
             }
+        }
+        if clamped_locked {
+            self.statistic.num_ilb_clamp_locked += 1;
+        }
+        if prefix > 0 {
+            self.statistic.avg_ilb_prefix += prefix as f64;
         }
         target
     }
@@ -396,6 +406,16 @@ impl DagCnfSolver {
             // ----- ILB fast path: keep the shared assumption prefix -----
             self.statistic.num_ilb += 1;
             self.statistic.avg_ilb_reuse += target as f64;
+            let constrained = !assumption.is_empty()
+                && assumption[assumption.len() - 1].var() == self.constrain_act;
+            if constrained {
+                self.statistic.num_ilb_con += 1;
+                self.statistic.avg_ilb_reuse_con += target as f64;
+                self.statistic.avg_ilb_frac_con +=
+                    target as f64 / (assumption.len() - 1).max(1) as f64;
+            } else {
+                self.statistic.avg_ilb_reuse_unc += target as f64;
+            }
             self.backtrack(target, false);
             self.detach_temporaries();
             self.prepared_vsids = false;

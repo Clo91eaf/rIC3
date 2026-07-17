@@ -19,6 +19,12 @@ enum BlockedOrder {
     Activity {
         ascending: bool,
     },
+    /// reverse of the caller's cube order. For mic drop loops this keeps the
+    /// assumption order consistent with the drop iteration (candidates leave
+    /// from the tail), maximizing the trail prefix shared between consecutive
+    /// queries (ILB). With an activity-ascending mic cube this coincides with
+    /// the classic activity-descending query order.
+    Reverse,
     #[allow(unused)]
     Inn,
     #[default]
@@ -28,6 +34,11 @@ enum BlockedOrder {
 impl<'a, 'cube> Blocked<'a, 'cube> {
     pub(super) fn with_act_order(mut self, ascending: bool) -> Self {
         self.order = BlockedOrder::Activity { ascending };
+        self
+    }
+
+    pub(super) fn with_rev_order(mut self) -> Self {
+        self.order = BlockedOrder::Reverse;
         self
     }
 
@@ -61,6 +72,11 @@ impl<'a, 'cube> Blocked<'a, 'cube> {
             BlockedOrder::Activity { ascending } => {
                 let mut ordered = cube.clone();
                 ic3.activity.sort_by_activity(&mut ordered, ascending);
+                Some(ordered)
+            }
+            BlockedOrder::Reverse => {
+                let mut ordered = cube.clone();
+                ordered.reverse();
                 Some(ordered)
             }
             BlockedOrder::Inn => {
