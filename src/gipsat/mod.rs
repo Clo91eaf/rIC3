@@ -52,6 +52,8 @@ pub struct DagCnfSolver {
     constrain_act: Var,
     dc: Gptr<DagCnf>,
     trivial_unsat: bool,
+    /// periodically shorten learnt clauses via unit-propagation vivification
+    vivify: bool,
     mark: LitSet,
     rng: SmallRng,
     pub cfg: Config,
@@ -100,12 +102,24 @@ impl DagCnfSolver {
             constraint: Default::default(),
             statistic: Default::default(),
             trivial_unsat: false,
+            vivify: std::env::var("GIPSAT_VIVIFY").map(|v| v != "0").unwrap_or(true),
             rng: SmallRng::seed_from_u64(0),
             cfg: Default::default(),
             mark: Default::default(),
         };
         while solver.num_var() < solver.dc.num_var() {
             solver.new_var();
+        }
+        if std::env::var("GIPSAT_CLS_STATS").is_ok() {
+            let (mut n2, mut n3, mut nb) = (0usize, 0usize, 0usize);
+            for cls in dc.clause() {
+                match cls.len() {
+                    0..=2 => n2 += 1,
+                    3 => n3 += 1,
+                    _ => nb += 1,
+                }
+            }
+            eprintln!("gipsat trans clauses: len<=2: {n2}, len3: {n3}, len>3: {nb}");
         }
         for cls in dc.clause() {
             solver.add_clause_inner(cls, ClauseKind::Trans);

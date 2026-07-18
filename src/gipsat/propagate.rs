@@ -62,11 +62,17 @@ impl DagCnfSolver {
             'next_cls: while w < wtrs_p_len {
                 let blocker = unsafe { (*wtrs_p_dat.add(w)).blocker };
                 if self.value.v(blocker) == Lbool::TRUE {
+                    self.statistic.num_prop_blocker += 1;
                     w += 1;
                     continue;
                 }
                 let cid = unsafe { (*wtrs_p_dat.add(w)).clause };
                 let mut cref = self.cdb.get(cid);
+                if cref.len() <= 3 {
+                    self.statistic.num_prop_short += 1;
+                } else {
+                    self.statistic.num_prop_long += 1;
+                }
                 if cref[0] == !p {
                     cref.swap(0, 1);
                 }
@@ -123,11 +129,17 @@ impl DagCnfSolver {
                 let blocker = unsafe { (*wtrs_p_dat.add(w)).blocker };
                 let v = self.value.v(blocker);
                 if v == Lbool::TRUE || !self.domain.has(blocker.var()) {
+                    self.statistic.num_prop_blocker += 1;
                     w += 1;
                     continue;
                 }
                 let cid = unsafe { (*wtrs_p_dat.add(w)).clause };
                 let mut cref = self.cdb.get(cid);
+                if cref.len() <= 3 {
+                    self.statistic.num_prop_short += 1;
+                } else {
+                    self.statistic.num_prop_long += 1;
+                }
                 if cref[0] == !p {
                     cref.swap(0, 1);
                 }

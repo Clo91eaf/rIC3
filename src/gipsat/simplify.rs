@@ -13,6 +13,7 @@ pub struct Simplify {
     pub last_simplify: usize,
     pub lazy_remove: Vec<LitVec>,
     pub last_num_lemma: usize,
+    pub vivify_cursor: usize,
 }
 
 impl Default for Simplify {
@@ -22,6 +23,7 @@ impl Default for Simplify {
             last_simplify: 0,
             lazy_remove: Default::default(),
             last_num_lemma: 1000,
+            vivify_cursor: 0,
         }
     }
 }
@@ -39,10 +41,84 @@ impl DagCnfSolver {
                 self.cdb.lemmas = self.simplify_subsume(lemmas);
                 self.simplify.last_num_lemma = self.cdb.lemmas.len();
             }
+            if self.vivify {
+                self.vivify_learnts(100);
+            }
             self.clean_eq();
             self.garbage_collect();
             self.simplify.last_simplify = self.statistic.num_solve;
         }
+    }
+
+    /// Vivify a budgeted batch of learnt clauses: assume the negation of each
+    /// literal in turn under a scratch decision level; a unit-propagation
+    /// conflict proves the assumed prefix already implied — the remaining
+    /// literals are dropped. Level-0-false literals are dropped as well.
+    /// Long-lived clauses dominate propagation clause fetches, so shortening
+    /// them amortizes across the very large number of incremental queries.
+    ///
+    /// Soundness of derivations through temporaries: permanent clauses never
+    /// contain the activation variable, and with act unassigned a temporary
+    /// (D ∨ ¬act) can neither conflict nor propagate a non-act literal, so
+    /// vivification derivations are temporary-free.
+    pub fn vivify_learnts(&mut self, budget: usize) {
+        debug_assert!(self.highest_level() == 0);
+        let n = self.cdb.learnt.len();
+        if n == 0 {
+            return;
+        }
+        let start = Instant::now();
+        let mut scanned = 0;
+        while scanned < budget && scanned < n {
+            scanned += 1;
+            let idx = self.simplify.vivify_cursor % self.cdb.learnt.len();
+            self.simplify.vivify_cursor = self.simplify.vivify_cursor.wrapping_add(1);
+            let cref = self.cdb.learnt[idx];
+            let cls = self.cdb.get(cref);
+            if cls.is_removed() || cls.len() <= 2 || self.locked(cref) {
+                continue;
+            }
+            let lits = cls.litvec();
+            if lits.iter().any(|l| self.value.v(*l).is_true()) {
+                continue;
+            }
+            self.new_level();
+            let mut keep = LitVec::new();
+            let mut conflict = false;
+            for &l in lits.iter() {
+                match self.value.v(l) {
+                    Lbool::TRUE => {
+                        // implied by the assumed prefix: prefix ∪ {l} suffices
+                        keep.push(l);
+                        break;
+                    }
+                    Lbool::FALSE => continue, // redundant in this clause
+                    _ => {
+                        keep.push(l);
+                        self.assign(!l, CREF_NONE);
+                        if self.propagate() != CREF_NONE {
+                            conflict = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            self.backtrack(0, false);
+            let _ = conflict;
+            if keep.len() >= 2 && keep.len() < lits.len() {
+                let mut c = self.cdb.get(cref);
+                for drop in lits.iter().filter(|l| !keep.contains(l)) {
+                    if c.len() <= 2 {
+                        break;
+                    }
+                    self.strengthen_clause(cref, *drop);
+                    c = self.cdb.get(cref);
+                    self.statistic.num_vivify_lits += 1;
+                }
+                self.statistic.num_vivify_shrunk += 1;
+            }
+        }
+        self.statistic.vivify_time += start.elapsed();
     }
 
     pub fn simplify_satisfied_clauses(&mut self, mut clauses: Gvec<CRef>) -> Gvec<CRef> {
