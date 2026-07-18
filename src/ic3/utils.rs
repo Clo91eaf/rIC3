@@ -25,6 +25,12 @@ pub struct Statistic {
     pub time: RunningTime,
 
     pub num_mic: usize,
+    /// frame lemmas strengthened by UP vivification
+    pub num_lemma_vivify: usize,
+    /// average literals removed per vivified lemma
+    pub avg_lemma_vivify_shrink: Average,
+    /// total time in the lemma vivification pass
+    pub lemma_vivify_time: Duration,
     pub avg_mic_cube_len: Average,
     pub avg_po_cube_len: Average,
     pub mic_drop: SuccessRate,

@@ -4,7 +4,7 @@ use super::{
 };
 use giputils::gvec::Gvec;
 use log::{debug, trace};
-use logicrs::{Lbool, LitOrdVec, LitVec, VarMap};
+use logicrs::{Lbool, Lit, LitOrdVec, LitVec, VarMap};
 use std::{mem::take, time::Instant};
 
 #[derive(Clone)]
@@ -47,6 +47,48 @@ impl DagCnfSolver {
             self.clean_eq();
             self.garbage_collect();
             self.simplify.last_simplify = self.statistic.num_solve;
+        }
+    }
+
+    /// Try to shorten an externally-owned clause (e.g. an IC3 frame lemma)
+    /// by unit propagation over the full clause database: assume literal
+    /// negations one at a time; a conflict or an implied literal proves a
+    /// strict subset sufficient. Uses full (domain-unrestricted) propagation
+    /// and cleans temporary clauses first, so derivations depend only on the
+    /// permanent database. Returns the shortened clause if strictly shorter.
+    pub fn vivify_clause(&mut self, lits: &[Lit]) -> Option<LitVec> {
+        self.backtrack(0, false);
+        self.clean_temporary();
+        if self.trivial_unsat || self.propagate() != CREF_NONE {
+            return None;
+        }
+        if lits.iter().any(|l| self.value.v(*l).is_true()) {
+            // satisfied at level 0: the frame layer should not act on this
+            return None;
+        }
+        self.new_level();
+        let mut keep = LitVec::new();
+        for &l in lits {
+            match self.value.v(l) {
+                Lbool::TRUE => {
+                    keep.push(l);
+                    break;
+                }
+                Lbool::FALSE => continue,
+                _ => {
+                    keep.push(l);
+                    self.assign(!l, CREF_NONE);
+                    if self.propagate_full() != CREF_NONE {
+                        break;
+                    }
+                }
+            }
+        }
+        self.backtrack(0, false);
+        if !keep.is_empty() && keep.len() < lits.len() {
+            Some(keep)
+        } else {
+            None
         }
     }
 

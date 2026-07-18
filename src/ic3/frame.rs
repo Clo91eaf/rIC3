@@ -14,6 +14,8 @@ pub struct FrameLemma {
     lemma: LitOrdVec,
     pub po: Option<ProofObligation>,
     pub _ctp: Option<LitVec>,
+    /// lemma vivification has already been attempted on this lemma
+    pub vivified: bool,
 }
 
 impl FrameLemma {
@@ -23,6 +25,7 @@ impl FrameLemma {
             lemma,
             po,
             _ctp: ctp,
+            vivified: false,
         }
     }
 }
@@ -313,6 +316,57 @@ impl IC3 {
         self.frame.frames[frame].push(FrameLemma::new(lemma, po, None));
         self.frame.early = self.frame.early.min(begin);
         inv_found
+    }
+
+    /// Strengthen existing frame lemmas by unit propagation ("lemma
+    /// vivification"): for lemma cube c at frame k, ask the frame-k solver
+    /// whether a strict subset of c is already refuted by its clause database
+    /// (transition relation + lemmas of frames >= k). Frame lemmas only need
+    /// one-directional soundness — every state reachable in <= k steps
+    /// satisfies the database, so a UP-implied shorter clause is a valid
+    /// (stronger) lemma, provided its cube still excludes the initial states.
+    /// Returns true if strengthening emptied a frame (invariant found).
+    pub(super) fn vivify_frames(&mut self) -> bool {
+        if !self.cfg.lemma_vivify {
+            return false;
+        }
+        let start = std::time::Instant::now();
+        const BUDGET: usize = 500;
+        let mut attempts = 0;
+        'outer: for k in (1..self.frame.len()).rev() {
+            let mut j = 0;
+            while j < self.frame[k].len() {
+                if attempts >= BUDGET || start.elapsed().as_millis() > 200 {
+                    break 'outer;
+                }
+                if self.frame[k][j].vivified {
+                    j += 1;
+                    continue;
+                }
+                self.frame.frames[k][j].vivified = true;
+                attempts += 1;
+                let cube = self.frame[k][j].as_litvec().clone();
+                let clause = !cube;
+                if let Some(short_clause) = self.solvers[k].dcs.vivify_clause(&clause) {
+                    let short_cube = !short_clause;
+                    if !self.tsctx.cube_subsume_init(&short_cube) {
+                        let po = self.frame.frames[k][j].po.clone();
+                        self.statistic.num_lemma_vivify += 1;
+                        self.statistic.avg_lemma_vivify_shrink +=
+                            (clause.len() - short_cube.len()) as f64;
+                        if self.add_lemma(k, short_cube, true, po) {
+                            self.statistic.lemma_vivify_time += start.elapsed();
+                            return true;
+                        }
+                        // the old lemma was subsumed away in place; recheck j
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+        }
+        self.statistic.lemma_vivify_time += start.elapsed();
+        false
     }
 
     pub(super) fn add_inf_lemma(&mut self, lemma: LitVec) {

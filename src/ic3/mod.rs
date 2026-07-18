@@ -107,6 +107,10 @@ pub struct IC3Config {
     #[arg(long = "parent-lemma", action = ArgAction::Set, default_value_t = true)]
     pub parent_lemma: bool,
 
+    /// strengthen existing frame lemmas via unit propagation after each propagate phase
+    #[arg(long = "lemma-vivify", action = ArgAction::Set, default_value_t = true)]
+    pub lemma_vivify: bool,
+
     /// predicate property
     #[arg(long = "pred-prop", default_value_t = false)]
     pub pred_prop: bool,
@@ -365,6 +369,11 @@ impl Engine for IC3 {
                 return McResult::UNSAT;
             }
             self.propagate_to_inf();
+            if self.vivify_frames() {
+                self.tracer.trace_state(None, McResult::UNSAT);
+                self.finish_progress(McResult::UNSAT);
+                return McResult::UNSAT;
+            }
             self.render_progress();
         }
     }

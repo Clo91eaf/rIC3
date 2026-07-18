@@ -51,7 +51,7 @@ impl Watchers {
 
 impl DagCnfSolver {
     #[inline]
-    fn propagate_full(&mut self) -> CRef {
+    pub(super) fn propagate_full(&mut self) -> CRef {
         while self.propagated < self.trail.len() as u32 {
             let p = self.trail[self.propagated];
             self.propagated += 1;
