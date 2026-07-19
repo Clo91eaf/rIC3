@@ -251,6 +251,16 @@ impl IC3 {
         contained_check: bool,
         po: Option<ProofObligation>,
     ) -> bool {
+        if let Ok(path) = std::env::var("RIC3_LEMMA_LOG") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let s: Vec<String> = lemma
+                    .iter()
+                    .map(|l| format!("{:?}", l.map_var(|v| self.rst.restore_var(v))))
+                    .collect();
+                let _ = writeln!(f, "{frame}|{}", s.join(","));
+            }
+        }
         let lemma = LitOrdVec::new(lemma);
         if frame == 0 {
             assert_eq!(self.frame.len(), 1);

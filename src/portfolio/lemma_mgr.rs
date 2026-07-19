@@ -8,6 +8,7 @@ pub struct LemmaMgr {
     recv: IpcReceiverSet,
     rid_to_wid: GHashMap<u64, usize>,
     workers: Vec<LemmaWorker>,
+    stop_id: u64,
 }
 
 struct LemmaWorker {
@@ -17,12 +18,23 @@ struct LemmaWorker {
 }
 
 impl LemmaMgr {
-    pub fn new() -> Self {
-        Self {
-            recv: IpcReceiverSet::new().unwrap(),
-            rid_to_wid: GHashMap::new(),
-            workers: Vec::new(),
-        }
+    /// Returns the manager together with a shutdown sender: the manager holds
+    /// send ends of the very channels its select set receives on, so channel
+    /// closure alone can never terminate `run` — the coordinator must signal
+    /// shutdown explicitly before joining.
+    pub fn new() -> (Self, LemmaIpcTx) {
+        let mut recv = IpcReceiverSet::new().unwrap();
+        let (stop_tx, stop_rx) = ipc_channel::ipc::channel().unwrap();
+        let stop_id = recv.add(stop_rx).unwrap();
+        (
+            Self {
+                recv,
+                rid_to_wid: GHashMap::new(),
+                workers: Vec::new(),
+                stop_id,
+            },
+            stop_tx,
+        )
     }
 
     pub fn add_worker(
@@ -39,12 +51,15 @@ impl LemmaMgr {
     }
 
     pub fn run(mut self) {
-        while !self.rid_to_wid.is_empty() {
+        loop {
             match self.recv.select() {
                 Ok(events) => {
                     for event in events {
                         match event {
                             IpcSelectionResult::MessageReceived(id, message) => {
+                                if id == self.stop_id {
+                                    return;
+                                }
                                 let Some(&worker_idx) = self.rid_to_wid.get(&id) else {
                                     continue;
                                 };

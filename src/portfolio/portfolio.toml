@@ -36,6 +36,25 @@ bmc_kissat_dyn = "bmc --kissat --dyn-step"
 wlbmc = "wl-bmc"
 wlkind = "wl-kind --step 1"
 
+# Homogeneous IC3 ensemble differing only in random seed: with --share-lemma
+# this is trajectory ensembling that keeps every trajectory's frame progress
+# (unlike blind restarts, which discard it).
+[ic3_seeds]
+# identical engines: the portfolio's auto_rseed gives each worker a distinct
+# seed, so this is a pure seed-diversity trajectory ensemble
+ic3_s0 = "ic3"
+ic3_s1 = "ic3"
+ic3_s2 = "ic3"
+ic3_s3 = "ic3"
+ic3_s4 = "ic3"
+ic3_s5 = "ic3"
+ic3_s6 = "ic3"
+ic3_s7 = "ic3"
+ic3_s8 = "ic3"
+ic3_s9 = "ic3"
+ic3_s10 = "ic3"
+ic3_s11 = "ic3"
+
 [light]
 ic3_no_preproc = "ic3 --ctg=false --frts=false --scorr=false --drop-po=false"
 ic3_abs_all = "ic3 --abs-cst --abs-trans"

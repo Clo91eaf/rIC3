@@ -314,7 +314,10 @@ impl Portfolio {
 
 impl Engine for Portfolio {
     fn check(&mut self) -> McResult {
-        let mut lemma_mgr = self.cfg.share_lemma.then(LemmaMgr::new);
+        let (mut lemma_mgr, lemma_stop) = match self.cfg.share_lemma.then(LemmaMgr::new) {
+            Some((mgr, stop)) => (Some(mgr), Some(stop)),
+            None => (None, None),
+        };
         for (worker_idx, worker) in self.engines.iter_mut().enumerate() {
             let (state_tx, state_rx) = ipc::channel().unwrap();
             let (lemma_send, lemma_recv) = if self.cfg.share_lemma {
@@ -354,6 +357,9 @@ impl Engine for Portfolio {
         loop {
             if self.ctrl.is_terminated() || self.cfg.time_limit_hit(start) {
                 self.terminate_running();
+                lemma_stop
+                    .as_ref()
+                    .map(|tx| tx.send((None, Default::default())).ok());
                 let _ = lemma_mgr_join.map(|j| j.join());
                 if let Some(ui) = self.ui.as_ref() {
                     ui.finish(McResult::Unknown(None));
@@ -369,6 +375,9 @@ impl Engine for Portfolio {
                     .winner_idx
                     .map(|winner_idx| self.engines[winner_idx].state)
                     .unwrap_or(McResult::Unknown(None));
+                lemma_stop
+                    .as_ref()
+                    .map(|tx| tx.send((None, Default::default())).ok());
                 let _ = lemma_mgr_join.map(|j| j.join());
                 if let Some(ui) = self.ui.as_ref() {
                     ui.finish(res);
@@ -380,6 +389,9 @@ impl Engine for Portfolio {
 
             if let Some(res) = self.reap_child() {
                 self.terminate_running();
+                lemma_stop
+                    .as_ref()
+                    .map(|tx| tx.send((None, Default::default())).ok());
                 let _ = lemma_mgr_join.map(|j| j.join());
                 if let Some(ui) = self.ui.as_ref() {
                     ui.finish(res);
