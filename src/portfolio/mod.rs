@@ -9,7 +9,7 @@ use crate::transys::Transys;
 use crate::transys::certify::{BlCex, BlProof, Restore};
 use crate::ui::UiRenderer;
 use crate::utils::{
-    CertIpcRx, CertIpcTx, EngineCtrl, LemmaIpcRx, StateIpcTx, install_interrupt_handler,
+    CertIpcRx, CertIpcTx, EngineCtrl, LemmaIpcRx, LemmaIpcTx, StateIpcTx, install_interrupt_handler,
 };
 use crate::{BlEngine, Engine, McBlCertificate, McResult, create_bl_engine, impl_config_deref};
 use anyhow::Context;
@@ -100,6 +100,7 @@ impl Worker {
         sym: &VarSymbols,
         tracer: StateIpcTx,
         extractor: Option<LemmaIpcRx>,
+        exporter: Option<LemmaIpcTx>,
     ) -> ! {
         set_max_level(LevelFilter::Warn);
         // We are already in the forked child, so take ownership of the inherited
@@ -108,6 +109,9 @@ impl Worker {
         let sym = unsafe { std::ptr::read(sym) };
         let mut engine = create_bl_engine(self.cfg.clone(), ts, sym);
         engine.add_tracer(Box::new(tracer));
+        // outbound lemma sharing: traced (infinite-frame) lemmas go to the
+        // portfolio's lemma manager for forwarding to the other workers
+        exporter.map(|tx| engine.add_tracer(Box::new(tx)));
         extractor.map(|e| engine.set_extractor(Box::new(e)));
         let res = engine.check();
         if let Some(cert_tx) = self.cert_tx.as_ref() {
@@ -320,11 +324,22 @@ impl Engine for Portfolio {
         };
         for (worker_idx, worker) in self.engines.iter_mut().enumerate() {
             let (state_tx, state_rx) = ipc::channel().unwrap();
-            let (lemma_send, lemma_recv) = if self.cfg.share_lemma {
+            // two lemma channels per worker: inbound (manager -> worker,
+            // consumed via the engine's extractor) and outbound (worker ->
+            // manager, fed by the engine's lemma tracer). The manager's
+            // select set must receive the OUTBOUND ends — receiving its own
+            // inbound forwards would both race the worker for them and echo.
+            let (lemma_send, lemma_recv, export_tx, export_rx) = if self.cfg.share_lemma {
                 let (lemma_send, lemma_recv) = ipc::channel().unwrap();
-                (Some(lemma_send), Some(lemma_recv))
+                let (export_tx, export_rx) = ipc::channel().unwrap();
+                (
+                    Some(lemma_send),
+                    Some(lemma_recv),
+                    Some(export_tx),
+                    Some(export_rx),
+                )
             } else {
-                (None, None)
+                (None, None, None, None)
             };
             match fork::fork().unwrap() {
                 fork::Fork::Parent(child) => {
@@ -333,7 +348,7 @@ impl Engine for Portfolio {
                         lemma_mgr
                             .add_worker(
                                 worker.name.clone(),
-                                lemma_recv.unwrap(),
+                                export_rx.unwrap(),
                                 lemma_send.unwrap(),
                             )
                             .unwrap()
@@ -345,7 +360,7 @@ impl Engine for Portfolio {
                 }
                 fork::Fork::Child => {
                     worker.run(
-                        &self.ts, &self.ots, &self.rst, &self.sym, state_tx, lemma_recv,
+                        &self.ts, &self.ots, &self.rst, &self.sym, state_tx, lemma_recv, export_tx,
                     );
                 }
             }

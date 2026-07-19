@@ -64,6 +64,9 @@ impl LemmaMgr {
                                     continue;
                                 };
                                 let (k, lemma): (Option<usize>, LitVec) = message.to().unwrap();
+                                if std::env::var("RIC3_SHARE_DEBUG").is_ok() {
+                                    eprintln!("lemma-mgr: recv from w{worker_idx} k={k:?} len={}", lemma.len());
+                                }
                                 for (idx, other) in self.workers.iter().enumerate() {
                                     if idx == worker_idx {
                                         continue;
