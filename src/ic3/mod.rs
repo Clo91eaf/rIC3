@@ -14,7 +14,7 @@ use crate::{
 use activity::Activity;
 use clap::{ArgAction, Args, Parser};
 use frame::Frames;
-use giputils::{TerminateCtrl, logger::IntervalLogger, ptr::Grc};
+use giputils::{TerminateCtrl, hash::GHashSet, logger::IntervalLogger, ptr::Grc};
 use log::{Level, debug, error, info, trace};
 use logicrs::{Lit, LitOrdVec, LitVec, LitVvec, Var, VarMap, VarSymbols, satif::Satif};
 use proofoblig::{ProofObligation, ProofObligationQueue};
@@ -194,6 +194,13 @@ pub struct IC3 {
     /// inbound shared-lemma source (portfolio `--share-lemma`); `None` when
     /// running standalone
     extractor: Option<Box<dyn ExtractorIf>>,
+    /// keys of frame lemmas already exported to portfolio siblings, so each is
+    /// shared at most once
+    shared_lemmas: GHashSet<LitVec>,
+    /// only export frame lemmas at or below this length (0 disables finite-frame
+    /// sharing); short lemmas are the strong, broadly-useful ones and keep the
+    /// shared volume low
+    share_finite_maxlen: usize,
     ctrl: Arc<EngineCtrl>,
     renderer: Option<UiRenderer>,
 }
@@ -299,6 +306,11 @@ impl IC3 {
             filog: Default::default(),
             tracer: Tracer::new(),
             extractor: None,
+            shared_lemmas: GHashSet::new(),
+            share_finite_maxlen: std::env::var("RIC3_SHARE_FINITE_MAXLEN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(8),
             ctrl: Arc::new(EngineCtrl::new()),
             renderer: None,
         }

@@ -33,6 +33,8 @@ pub struct Statistic {
     pub lemma_vivify_time: Duration,
     /// frame lemmas imported from sibling portfolio workers
     pub num_lemma_import: usize,
+    /// finite-frame lemmas exported to sibling portfolio workers
+    pub num_lemma_export: usize,
     pub avg_mic_cube_len: Average,
     pub avg_po_cube_len: Average,
     pub mic_drop: SuccessRate,

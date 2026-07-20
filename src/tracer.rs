@@ -121,6 +121,13 @@ impl Tracer {
         }
     }
 
+    /// True when at least one lemma tracer (i.e. a portfolio exporter) is
+    /// attached; lets engines skip the cost of preparing shared lemmas when
+    /// running standalone.
+    pub fn wants_lemma(&self) -> bool {
+        !self.lemma.is_empty()
+    }
+
     pub fn trace_lemma(&mut self, inv: &LitVec, k: Option<usize>) {
         for t in self.lemma.iter_mut() {
             t.trace_lemma(inv, k);

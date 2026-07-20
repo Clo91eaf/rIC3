@@ -450,6 +450,34 @@ impl IC3 {
         false
     }
 
+    /// Export a finite-frame lemma to portfolio siblings. Unlike the infinite
+    /// (inductive-invariant) lemmas, these are proven only up to frame `k`, so
+    /// they carry `k` and an importer installs them no higher than that. Only
+    /// short lemmas are shared — they are the strong, broadly-applicable ones,
+    /// and the length bound keeps the shared volume (and every peer's import
+    /// cost) low. Each distinct lemma is exported at most once. The clause is
+    /// emitted in the original (pre-preprocessing) variable space so peers with
+    /// different preprocessing can map it into their own space.
+    pub(super) fn share_frame_lemma(&mut self, cube: &LitVec, k: usize) {
+        if self.share_finite_maxlen == 0
+            || cube.len() > self.share_finite_maxlen
+            || !self.tracer.wants_lemma()
+        {
+            return;
+        }
+        let mut key = cube.clone();
+        key.sort();
+        if !self.shared_lemmas.insert(key) {
+            return;
+        }
+        let clause: LitVec = cube
+            .iter()
+            .map(|l| !l.map_var(|v| self.rst.restore_var(v)))
+            .collect();
+        self.tracer.trace_lemma(&clause, Some(k));
+        self.statistic.num_lemma_export += 1;
+    }
+
     pub(super) fn add_inf_lemma(&mut self, lemma: LitVec) {
         self.tracer.trace_lemma(
             &lemma

@@ -34,6 +34,9 @@ impl IC3 {
                             po.push_to(frame_idx + 2);
                             self.obligations.add(po.clone());
                         }
+                        // a lemma that just advanced to frame_idx+1 is proven
+                        // and stable — a good candidate to share with siblings
+                        self.share_frame_lemma(&core, frame_idx + 1);
                         self.add_lemma(frame_idx + 1, core, true, lemma.po);
                         self.statistic.ctp.statistic(ctp > 0);
                         break;
