@@ -204,6 +204,47 @@ impl ExtractorIf for LemmaIpcRx {
     }
 }
 
+/// Continuously-drained wrapper around an inbound lemma channel.
+///
+/// `ipc_channel` sends are *blocking* once the OS socket buffer fills. If the
+/// engine only polled its inbound channel occasionally (e.g. once per major
+/// iteration), that buffer could fill while the engine was busy — and then the
+/// portfolio's lemma manager would block trying to forward into it. Because a
+/// busy engine is itself blocked exporting into the manager, this closes a
+/// worker↔manager cycle and deadlocks the whole portfolio.
+///
+/// This wrapper spawns a dedicated thread that does nothing but drain the OS
+/// buffer (blocking `recv`) into a bounded in-process queue, dropping messages
+/// when the queue is full. Lemma sharing is best-effort anyway, so dropping
+/// under load is acceptable — and keeping the OS buffer empty guarantees the
+/// manager's forwarding sends never block, which breaks the deadlock cycle.
+pub struct ThreadedExtractor {
+    rx: Receiver<(Option<usize>, LitVec)>,
+}
+
+impl ThreadedExtractor {
+    pub fn new(ipc: LemmaIpcRx) -> Self {
+        // bounded: caps memory if the engine consumes slower than peers produce
+        let (tx, rx) = mpsc::sync_channel::<(Option<usize>, LitVec)>(8192);
+        std::thread::spawn(move || {
+            // `recv` blocks; it returns Err only when every sender is gone,
+            // i.e. the channel is torn down at shutdown — then the thread ends.
+            while let Ok(msg) = ipc.recv() {
+                // best-effort: if the in-process queue is full, drop the lemma
+                // but keep draining the OS buffer so the manager never blocks
+                let _ = tx.try_send(msg);
+            }
+        });
+        Self { rx }
+    }
+}
+
+impl ExtractorIf for ThreadedExtractor {
+    fn extract_lemma(&mut self) -> Option<(Option<usize>, LitVec)> {
+        self.rx.try_recv().ok()
+    }
+}
+
 pub trait ExtractorIf: Send {
     fn extract_lemma(&mut self) -> Option<(Option<usize>, LitVec)>;
 }

@@ -4,7 +4,7 @@ use crate::{
     gipsat::{SolverStatistic, TransysSolver},
     ic3::{block::BlockResult, localabs::LocalAbs, predprop::PredProp},
     impl_config_deref,
-    tracer::{Tracer, TracerIf},
+    tracer::{ExtractorIf, Tracer, TracerIf},
     transys::{
         Transys, TransysCtx, TransysIf, certify::Restore, lift::TsLift, unroll::TransysUnroll,
     },
@@ -191,6 +191,9 @@ pub struct IC3 {
     rng: StdRng,
     filog: IntervalLogger,
     tracer: Tracer,
+    /// inbound shared-lemma source (portfolio `--share-lemma`); `None` when
+    /// running standalone
+    extractor: Option<Box<dyn ExtractorIf>>,
     ctrl: Arc<EngineCtrl>,
     renderer: Option<UiRenderer>,
 }
@@ -295,6 +298,7 @@ impl IC3 {
             rng,
             filog: Default::default(),
             tracer: Tracer::new(),
+            extractor: None,
             ctrl: Arc::new(EngineCtrl::new()),
             renderer: None,
         }
@@ -318,6 +322,11 @@ impl Engine for IC3 {
         self.extend();
         self.render_progress();
         loop {
+            if self.import_lemmas() {
+                self.tracer.trace_state(None, McResult::UNSAT);
+                self.finish_progress(McResult::UNSAT);
+                return McResult::UNSAT;
+            }
             let start = Instant::now();
             debug!("blocking phase begin");
             loop {
@@ -380,6 +389,10 @@ impl Engine for IC3 {
 
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
         self.tracer.add_tracer(tracer);
+    }
+
+    fn set_extractor(&mut self, extractor: Box<dyn ExtractorIf>) {
+        self.extractor = Some(extractor);
     }
 
     fn set_ui(&mut self, renderer: UiRenderer) {

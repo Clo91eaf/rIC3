@@ -4,7 +4,7 @@ mod ui;
 use self::lemma_mgr::LemmaMgr;
 use self::ui::PortfolioUi;
 use crate::config::{EngineConfig, EngineConfigBase, PreprocConfig, WorkerConfigs};
-use crate::tracer::{Tracer, TracerIf};
+use crate::tracer::{ThreadedExtractor, Tracer, TracerIf};
 use crate::transys::Transys;
 use crate::transys::certify::{BlCex, BlProof, Restore};
 use crate::ui::UiRenderer;
@@ -112,7 +112,10 @@ impl Worker {
         // outbound lemma sharing: traced (infinite-frame) lemmas go to the
         // portfolio's lemma manager for forwarding to the other workers
         exporter.map(|tx| engine.add_tracer(Box::new(tx)));
-        extractor.map(|e| engine.set_extractor(Box::new(e)));
+        // wrap the inbound channel in a continuously-draining thread so its OS
+        // buffer never fills — otherwise the manager blocks forwarding into a
+        // busy worker and the portfolio deadlocks (see ThreadedExtractor)
+        extractor.map(|e| engine.set_extractor(Box::new(ThreadedExtractor::new(e))));
         let res = engine.check();
         if let Some(cert_tx) = self.cert_tx.as_ref() {
             let certificate = match res {

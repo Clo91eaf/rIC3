@@ -379,6 +379,77 @@ impl IC3 {
         false
     }
 
+    /// Import lemmas shared by sibling portfolio workers (`--share-lemma`).
+    /// Each inbound item is a clause in the *original* (pre-preprocessing)
+    /// variable space, tagged with the frame it was proven at (`None` = an
+    /// inductive invariant, valid at every frame). We map it back into this
+    /// engine's internal variable space through the restore map's forward
+    /// direction; a literal with no forward image was eliminated by this
+    /// worker's own preprocessing, so the clause is not representable here and
+    /// is dropped whole — removing a literal would strengthen the clause and
+    /// could wrongly exclude a reachable state. The resulting cube is installed
+    /// as an ordinary frame lemma, so the normal propagate/generalize machinery
+    /// carries it forward. Returns true if an import emptied a frame (invariant
+    /// found).
+    pub(super) fn import_lemmas(&mut self) -> bool {
+        let Some(extractor) = self.extractor.as_mut() else {
+            return false;
+        };
+        // bound the work per call: draining an unbounded backlog and running
+        // add_lemma for each would let a flood of shared lemmas dominate this
+        // worker's own search. Leftovers are picked up on later iterations.
+        const IMPORT_BUDGET: usize = 512;
+        let mut batch: Vec<(Option<usize>, LitVec)> = Vec::new();
+        while batch.len() < IMPORT_BUDGET {
+            match extractor.extract_lemma() {
+                Some(item) => batch.push(item),
+                None => break,
+            }
+        }
+        for (k, clause) in batch {
+            // original clause -> internal cube (the negation of the clause)
+            let mut cube = LitVec::new();
+            let mut representable = true;
+            for &cl in clause.iter() {
+                match self.rst.try_forward(cl) {
+                    Some(il) => cube.push(!il),
+                    None => {
+                        representable = false;
+                        break;
+                    }
+                }
+            }
+            if !representable || cube.is_empty() {
+                continue;
+            }
+            // a cube touching the initial states cannot be a frame lemma here
+            if self.tsctx.cube_subsume_init(&cube) {
+                continue;
+            }
+            // an inductive invariant (k = None) holds at the top frame; a
+            // finite-frame lemma is only sound up to its own level
+            let target = match k {
+                Some(k) => k.min(self.level()),
+                None => self.level(),
+            };
+            if target == 0 {
+                continue;
+            }
+            self.statistic.num_lemma_import += 1;
+            if std::env::var("RIC3_SHARE_DEBUG").is_ok() {
+                eprintln!(
+                    "ic3-import: k={k:?} -> frame {target} cube_len={} (total imported {})",
+                    cube.len(),
+                    self.statistic.num_lemma_import
+                );
+            }
+            if self.add_lemma(target, cube, true, None) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn add_inf_lemma(&mut self, lemma: LitVec) {
         self.tracer.trace_lemma(
             &lemma

@@ -31,6 +31,8 @@ pub struct Statistic {
     pub avg_lemma_vivify_shrink: Average,
     /// total time in the lemma vivification pass
     pub lemma_vivify_time: Duration,
+    /// frame lemmas imported from sibling portfolio workers
+    pub num_lemma_import: usize,
     pub avg_mic_cube_len: Average,
     pub avg_po_cube_len: Average,
     pub mic_drop: SuccessRate,
