@@ -1,0 +1,9 @@
+benchmark,cond,result,wall_s
+rocket_1951.aig,baseline,TIMEOUT,150.6
+rocket_1951.aig,share,UNSAT,108.2
+cal97.aig,baseline,UNSAT,22.8
+cal97.aig,share,UNSAT,29.0
+qspiflash_dualflexpress_divfive-p027.aig,baseline,UNSAT,13.3
+qspiflash_dualflexpress_divfive-p027.aig,share,UNSAT,0.1
+lamport_nonatomic.5.prop1-back-serstep.aig,baseline,TIMEOUT,150.0
+lamport_nonatomic.5.prop1-back-serstep.aig,share,TIMEOUT,150.0

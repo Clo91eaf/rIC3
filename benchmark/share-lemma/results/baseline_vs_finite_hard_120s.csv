@@ -1,0 +1,13 @@
+benchmark,cond,result,wall_s
+yosyshq_appnote_123_cv32e40x-p573.aig,baseline,UNSAT,11.5
+yosyshq_appnote_123_cv32e40x-p573.aig,share,UNSAT,8.8
+byte_add_1-1.aig,baseline,UNSAT,8.7
+byte_add_1-1.aig,share,UNSAT,0.2
+qspiflash_dualflexpress_divfive-p114.aig,baseline,UNSAT,4.2
+qspiflash_dualflexpress_divfive-p114.aig,share,UNSAT,0.6
+yosyshq_appnote_123_cv32e40x-p363.aig,baseline,UNSAT,19.0
+yosyshq_appnote_123_cv32e40x-p363.aig,share,UNSAT,14.0
+ILA_Piccolo_BEQ_sanity.aig,baseline,UNSAT,13.4
+ILA_Piccolo_BEQ_sanity.aig,share,UNSAT,18.4
+zonotope_2.aig,baseline,UNSAT,38.3
+zonotope_2.aig,share,UNSAT,10.6
