@@ -89,6 +89,23 @@ random seeds, so only repeat-verified results are claimed. `summarize.py` on the
 6 SAT (unsafe) cases under `--share-lemma`: all return SAT or time out, **never a
 false UNSAT** — importing shared lemmas does not report an unsafe design as safe.
 
+### Soundness scope
+
+Sharing is only sound between workers that reason over the *same* transition
+system. Two guards enforce this (see "make lemma sharing sound for heterogeneous
+configs"):
+
+- **Same-group routing** — finite-frame lemmas are shared only among workers
+  whose config matches after dropping `--rseed`. Different preprocessing/config
+  ⇒ different frame semantics ⇒ not shareable.
+- **Share-safe engines only** — `--inn` (unrolls to internal signals), `--abs-*`
+  and `--pred-prop` transform the system; their lemmas are not valid clauses in
+  the original variable space, so those engines abstain from sharing entirely.
+  Without this guard, a mixed `ic3 + ic3 --inn` ensemble reported a **false
+  UNSAT** on an unsafe design ~50% of runs (always via the `--inn` worker).
+
+`ic3_seeds` is a single share-safe group, so it shares fully and soundly.
+
 ## Files
 
 - `run_ab.sh` — baseline-vs-share A/B runner
