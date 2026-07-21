@@ -392,6 +392,9 @@ impl IC3 {
     /// carries it forward. Returns true if an import emptied a frame (invariant
     /// found).
     pub(super) fn import_lemmas(&mut self) -> bool {
+        if !self.share_safe() {
+            return false;
+        }
         let Some(extractor) = self.extractor.as_mut() else {
             return false;
         };
@@ -458,8 +461,24 @@ impl IC3 {
     /// cost) low. Each distinct lemma is exported at most once. The clause is
     /// emitted in the original (pre-preprocessing) variable space so peers with
     /// different preprocessing can map it into their own space.
+    /// Lemma sharing is only sound for engines that reason over the original
+    /// transition system. `--inn` unrolls it into internal signals; `--abs-*`
+    /// abstract constraints/transitions/arrays; `--pred-prop` adds a predicate
+    /// layer. Their frame lemmas and even their inductive invariants do not
+    /// survive the round-trip through the original variable space, so such an
+    /// engine must neither export nor import shared lemmas (mixing them in
+    /// yields a false UNSAT). Only plain IC3 participates.
+    pub(super) fn share_safe(&self) -> bool {
+        !self.cfg.inn
+            && !self.cfg.abs_cst
+            && !self.cfg.abs_trans
+            && !self.cfg.abs_array
+            && !self.cfg.pred_prop
+    }
+
     pub(super) fn share_frame_lemma(&mut self, cube: &LitVec, k: usize) {
-        if self.share_finite_maxlen == 0
+        if !self.share_safe()
+            || self.share_finite_maxlen == 0
             || cube.len() > self.share_finite_maxlen
             || !self.tracer.wants_lemma()
         {
@@ -479,13 +498,18 @@ impl IC3 {
     }
 
     pub(super) fn add_inf_lemma(&mut self, lemma: LitVec) {
-        self.tracer.trace_lemma(
-            &lemma
-                .iter()
-                .map(|l| !l.map_var(|v| self.rst.restore_var(v)))
-                .collect(),
-            None,
-        );
+        // export the invariant to portfolio siblings, but only from a
+        // share-safe engine (see share_safe): an --inn/--abs invariant is not a
+        // valid clause once mapped to the original variable space.
+        if self.share_safe() {
+            self.tracer.trace_lemma(
+                &lemma
+                    .iter()
+                    .map(|l| !l.map_var(|v| self.rst.restore_var(v)))
+                    .collect(),
+                None,
+            );
+        }
         let lemma = LitOrdVec::new(lemma);
         assert!(self.frame.trivial_contained(None, &lemma).is_none());
         let lastf = self.frame.frames.last_mut().unwrap();

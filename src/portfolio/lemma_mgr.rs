@@ -14,6 +14,11 @@ pub struct LemmaMgr {
 struct LemmaWorker {
     #[allow(unused)]
     name: String,
+    /// workers sharing a group key have an identical transition system
+    /// (same preprocessing/abstraction/encoding, differing only by rseed), so
+    /// their frame indices are comparable. Finite-frame lemmas are forwarded
+    /// only within a group; inductive invariants go to everyone.
+    group: String,
     send: LemmaIpcTx,
 }
 
@@ -40,13 +45,18 @@ impl LemmaMgr {
     pub fn add_worker(
         &mut self,
         worker: String,
+        group: String,
         recv: LemmaIpcRx,
         send: LemmaIpcTx,
     ) -> io::Result<()> {
         let recv_id = self.recv.add(recv)?;
         let worker_idx = self.workers.len();
         self.rid_to_wid.insert(recv_id, worker_idx);
-        self.workers.push(LemmaWorker { name: worker, send });
+        self.workers.push(LemmaWorker {
+            name: worker,
+            group,
+            send,
+        });
         Ok(())
     }
 
@@ -64,14 +74,28 @@ impl LemmaMgr {
                                     continue;
                                 };
                                 let (k, lemma): (Option<usize>, LitVec) = message.to().unwrap();
-                                if std::env::var("RIC3_SHARE_DEBUG").is_ok() {
-                                    eprintln!("lemma-mgr: recv from w{worker_idx} k={k:?} len={}", lemma.len());
-                                }
+                                // Only forward a lemma to workers in the source's
+                                // group — those with an identical transition
+                                // system. Engines like `--inn` (internal signals)
+                                // or `--abs-*` reason over a *transformed* system,
+                                // so even their inductive invariants are not valid
+                                // clauses for a differently-configured worker;
+                                // cross-group sharing can inject an unsound lemma
+                                // and yield a false UNSAT.
+                                let src_group = &self.workers[worker_idx].group;
+                                let mut sent = 0usize;
                                 for (idx, other) in self.workers.iter().enumerate() {
-                                    if idx == worker_idx {
+                                    if idx == worker_idx || &other.group != src_group {
                                         continue;
                                     }
                                     let _ = other.send.send((k, lemma.clone()));
+                                    sent += 1;
+                                }
+                                if std::env::var("RIC3_SHARE_DEBUG").is_ok() {
+                                    eprintln!(
+                                        "lemma-mgr: recv w{worker_idx} k={k:?} len={} group='{src_group}' -> {sent} recipients",
+                                        lemma.len()
+                                    );
                                 }
                             }
                             IpcSelectionResult::ChannelClosed(id) => {

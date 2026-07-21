@@ -92,6 +92,26 @@ struct Worker {
 }
 
 impl Worker {
+    /// Key identifying workers with an identical transition system. Two workers
+    /// share it iff their configs match after dropping `--rseed <n>` (the only
+    /// per-worker difference within a homogeneous ensemble); the seed steers
+    /// the search but leaves preprocessing, abstraction and encoding — and thus
+    /// frame semantics — unchanged. Used to scope finite-frame lemma sharing.
+    fn share_group(&self) -> String {
+        let mut toks = self.args.split_whitespace().peekable();
+        let mut out: Vec<&str> = Vec::new();
+        while let Some(t) = toks.next() {
+            if t == "--rseed" {
+                toks.next(); // drop the seed value too
+            } else if let Some(rest) = t.strip_prefix("--rseed=") {
+                let _ = rest;
+            } else {
+                out.push(t);
+            }
+        }
+        out.join(" ")
+    }
+
     fn run(
         &self,
         ts: &Transys,
@@ -351,6 +371,7 @@ impl Engine for Portfolio {
                         lemma_mgr
                             .add_worker(
                                 worker.name.clone(),
+                                worker.share_group(),
                                 export_rx.unwrap(),
                                 lemma_send.unwrap(),
                             )
