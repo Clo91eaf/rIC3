@@ -89,6 +89,15 @@ random seeds, so only repeat-verified results are claimed. `summarize.py` on the
 6 SAT (unsafe) cases under `--share-lemma`: all return SAT or time out, **never a
 false UNSAT** — importing shared lemmas does not report an unsafe design as safe.
 
+### Heterogeneous config (`results/bl_hwmcc_noshare_vs_share_60s.csv`)
+
+`bl_hwmcc` shares only among workers with the same transition system, so its
+plain-IC3 variants (`ic3`, `ic3_no_parent`, `ic3_ctg_limit`) form one sharing
+group while `--inn`/`--abs` workers abstain (see "group lemma sharing by
+transition system"). 18 UNSAT cases, 60 s: **14/18 → 15/18 (+1)**, no
+regressions. The flipped case `processed_hl_arr` is robust — no-share **0/5**
+(all time out), share **5/5** at ~0.6 s.
+
 ### Soundness scope
 
 Sharing is only sound between workers that reason over the *same* transition
