@@ -92,22 +92,37 @@ struct Worker {
 }
 
 impl Worker {
-    /// Key identifying workers with an identical transition system. Two workers
-    /// share it iff their configs match after dropping `--rseed <n>` (the only
-    /// per-worker difference within a homogeneous ensemble); the seed steers
-    /// the search but leaves preprocessing, abstraction and encoding — and thus
-    /// frame semantics — unchanged. Used to scope finite-frame lemma sharing.
+    /// Key identifying workers with an identical transition system, so their
+    /// frame indices are comparable and finite-frame lemmas can be shared.
+    ///
+    /// The system is fixed by preprocessing and the system-transforming flags
+    /// (`--inn`, `--abs-*`, `--pred-prop`, …); flags that only steer the search
+    /// (seed, CTG generalization, proof-obligation and parent-lemma handling,
+    /// the MAB) leave it unchanged, so two configs differing only in those
+    /// belong together. We drop a small allowlist of *known* search-only flags
+    /// and keep everything else: an unrecognized flag keeps its worker in its
+    /// own group, so the key can only be too fine (a missed sharing chance),
+    /// never too coarse (unsound sharing across different systems).
     fn share_group(&self) -> String {
-        let mut toks = self.args.split_whitespace().peekable();
+        // search-only flags that consume a following value token
+        const VALUE_SEARCH_FLAGS: &[&str] = &["--rseed", "--ctg-max", "--ctg-limit"];
+        // search-only boolean/standalone flags
+        const BOOL_SEARCH_FLAGS: &[&str] =
+            &["--ctg", "--ctp", "--parent-lemma", "--drop-po", "--mab"];
         let mut out: Vec<&str> = Vec::new();
+        let mut toks = self.args.split_whitespace();
         while let Some(t) = toks.next() {
-            if t == "--rseed" {
-                toks.next(); // drop the seed value too
-            } else if let Some(rest) = t.strip_prefix("--rseed=") {
-                let _ = rest;
-            } else {
-                out.push(t);
+            let name = t.split('=').next().unwrap_or(t);
+            if VALUE_SEARCH_FLAGS.contains(&name) {
+                if !t.contains('=') {
+                    toks.next(); // also drop the separate value token
+                }
+                continue;
             }
+            if BOOL_SEARCH_FLAGS.contains(&name) {
+                continue;
+            }
+            out.push(t);
         }
         out.join(" ")
     }
