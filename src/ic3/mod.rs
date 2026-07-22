@@ -307,10 +307,18 @@ impl IC3 {
             tracer: Tracer::new(),
             extractor: None,
             shared_lemmas: GHashSet::new(),
+            // Finite-frame lemma sharing is UNSOUND: it can report a false
+            // UNSAT on some unsafe instances (reproducibly on
+            // ponylink-slaveTXlen-sat with the ic3_seeds ensemble). A shared
+            // frame-k lemma should be valid for every state reachable within k
+            // steps, but in practice some interaction breaks this and injects a
+            // lemma that blocks a real counterexample. Disabled by default (0)
+            // until root-caused; only inductive-invariant sharing stays on.
+            // Set RIC3_SHARE_FINITE_MAXLEN>0 to re-enable for experiments.
             share_finite_maxlen: std::env::var("RIC3_SHARE_FINITE_MAXLEN")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(8),
+                .unwrap_or(0),
             ctrl: Arc::new(EngineCtrl::new()),
             renderer: None,
         }

@@ -1,5 +1,19 @@
 # Portfolio lemma-sharing evaluation
 
+> **⚠️ Correction — finite-frame sharing is UNSOUND and disabled by default.**
+> After this evaluation, `--share-lemma`'s finite-frame sharing was found to
+> report a **false UNSAT** on some unsafe instances (reproducibly on
+> `ponylink-slaveTXlen-sat` with `ic3_seeds`: UNSAT 4/4, while plain ic3 /
+> no-share / bmc all correctly time out; disabling finite sharing → 0/4). Root
+> cause not yet found — a shared frame-k lemma should hold for every state
+> reachable within k steps, but some interaction breaks this. Finite sharing is
+> therefore **off by default** (`RIC3_SHARE_FINITE_MAXLEN=0`); only inductive-
+> invariant sharing stays on, which alone showed **no measured speedup**.
+> **Consequently every speedup and "+1 solved" result below came from the
+> unsound finite path and does NOT hold with the sound default.** The sound,
+> retained parts are the deadlock fix, the import machinery, and the share_safe
+> / grouping guards.
+
 A/B evaluation of `--share-lemma` for the `ic3_seeds` portfolio (12 IC3 workers
 differing only by random seed). It backs two commits:
 
