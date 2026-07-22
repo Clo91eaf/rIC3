@@ -14,10 +14,9 @@ pub struct LemmaMgr {
 struct LemmaWorker {
     #[allow(unused)]
     name: String,
-    /// workers sharing a group key have an identical transition system
-    /// (same preprocessing/abstraction/encoding, differing only by rseed), so
-    /// their frame indices are comparable. Finite-frame lemmas are forwarded
-    /// only within a group; inductive invariants go to everyone.
+    /// workers sharing a group key have an identical transition system (same
+    /// preprocessing and system-transforming flags), so their frames are
+    /// comparable. Lemmas are forwarded only within a group.
     group: String,
     send: LemmaIpcTx,
 }
