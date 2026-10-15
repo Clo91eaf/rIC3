@@ -37,6 +37,9 @@ mod solver;
 mod ui;
 mod utils;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
 pub struct IC3Config {
     #[command(flatten)]
@@ -89,9 +92,10 @@ pub struct IC3Config {
     #[arg(long = "abs-trans", default_value_t = false)]
     pub abs_trans: bool,
 
-    /// dropping proof-obligation
+    /// dropping proof-obligation (off by default with dynamic or mab)
     #[arg(
         long = "drop-po", action = ArgAction::Set, default_value_t = true,
+        default_value_ifs([("dynamic", "true", "false"), ("mab", "true", "false")]),
     )]
     pub drop_po: bool,
 
@@ -187,11 +191,35 @@ pub struct IC3 {
     rng: StdRng,
     filog: IntervalLogger,
     tracer: Tracer,
+    /// Largest depth shown to have no counterexample.
+    completed_depth: Option<usize>,
     ctrl: Arc<EngineCtrl>,
     renderer: Option<UiRenderer>,
 }
 
 impl IC3 {
+    /// Terminated via `ctrl` or past `cfg.time_limit`.
+    fn is_interrupted(&self) -> bool {
+        self.ctrl.is_terminated()
+            || self
+                .cfg
+                .time_limit
+                .is_some_and(|limit| self.statistic.time.time().as_secs() >= limit)
+    }
+
+    /// Records that no counterexample exists up to `depth`. Returns the final
+    /// result if `depth` is the bound.
+    fn complete_depth(&mut self, depth: usize) -> Option<McResult> {
+        self.completed_depth = Some(depth);
+        let result = McResult::Unknown(Some(depth));
+        self.tracer.trace_state(None, result);
+        if depth < self.cfg.end {
+            return None;
+        }
+        info!("IC3 reached bound {depth}, stopping search");
+        Some(self.finish_progress(result))
+    }
+
     #[inline]
     pub fn level(&self) -> usize {
         self.solvers.len() - 1
@@ -291,6 +319,7 @@ impl IC3 {
             rng,
             filog: Default::default(),
             tracer: Tracer::new(),
+            completed_depth: None,
             ctrl: Arc::new(EngineCtrl::new()),
             renderer: None,
         }
@@ -299,17 +328,28 @@ impl IC3 {
     pub fn invariant(&mut self) -> Vec<LitVec> {
         self.inner_invariant()
             .iter()
-            .map(|l| l.map_var(|l| self.rst.restore_var(l)))
+            .map(|l| l.filter_map(|l| self.rst.try_restore(l)))
             .collect()
+    }
+
+    /// Replaces the termination control, so that an engine wrapping several IC3
+    /// instances can stop any of them through one handle.
+    pub fn set_ctrl(&mut self, ctrl: Arc<EngineCtrl>) {
+        self.ctrl = ctrl;
     }
 }
 
 impl Engine for IC3 {
     fn check(&mut self) -> McResult {
         if !self.prep_prop_base() {
-            self.tracer.trace_state(None, McResult::SAT(0));
-            self.finish_progress(McResult::SAT(0));
-            return McResult::SAT(0);
+            return self.finish_progress(McResult::SAT(0));
+        }
+        // With a predicate property the base check covers depth 0, and level k
+        // then covers depth k + 1.
+        if self.predprop.is_some()
+            && let Some(result) = self.complete_depth(0)
+        {
+            return result;
         }
         self.extend();
         self.render_progress();
@@ -321,17 +361,13 @@ impl Engine for IC3 {
                     BlockResult::Failure(depth) => Some(McResult::SAT(depth)),
                     BlockResult::Proved => Some(McResult::UNSAT),
                     BlockResult::OverallTimeLimitExceeded => {
-                        Some(McResult::Unknown(Some(self.level())))
+                        Some(McResult::Unknown(self.completed_depth))
                     }
                     _ => None,
                 };
                 if let Some(result) = terminal {
                     self.statistic.block.overall_time += start.elapsed();
-                    if !matches!(result, McResult::Unknown(_)) {
-                        self.tracer.trace_state(None, result);
-                    }
-                    self.finish_progress(result);
-                    return result;
+                    return self.finish_progress(result);
                 }
                 if let Some((bad, inputs)) = self.get_bad() {
                     debug!("bad state found in frame {}", self.level());
@@ -352,17 +388,17 @@ impl Engine for IC3 {
             debug!("blocking phase end");
             self.statistic.block.overall_time += start.elapsed();
             self.filog.log(Level::Info, self.frame.statistic(true));
-            self.tracer
-                .trace_state(None, McResult::Unknown(Some(self.level())));
+            let depth = self.level() + usize::from(self.predprop.is_some());
+            if let Some(result) = self.complete_depth(depth) {
+                return result;
+            }
             self.extend();
             self.render_progress();
             let start = Instant::now();
             let propagate = self.propagate(None);
             self.statistic.propagate.overall_time += start.elapsed();
             if propagate {
-                self.tracer.trace_state(None, McResult::UNSAT);
-                self.finish_progress(McResult::UNSAT);
-                return McResult::UNSAT;
+                return self.finish_progress(McResult::UNSAT);
             }
             self.propagate_to_inf();
             self.render_progress();

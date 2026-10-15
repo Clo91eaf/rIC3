@@ -1,4 +1,4 @@
-mod aux;
+mod auxv;
 pub mod certify;
 mod ctx;
 pub mod frts;
@@ -14,7 +14,7 @@ pub mod unroll;
 
 pub use ctx::*;
 use giputils::hash::{GHashMap, GHashSet};
-use logicrs::{DagCnf, Lit, LitVec, LitVvec, Var, VarVMap, satif::Satif};
+use logicrs::{DagCnf, Lit, LitFixedVec, LitVec, LitVvec, Var, VarVMap, satif::Satif};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Display},
@@ -47,7 +47,7 @@ pub trait TransysIf {
 
     fn constraint(&self) -> impl Iterator<Item = Lit>;
 
-    fn trans(&self) -> impl Iterator<Item = &LitVec>;
+    fn trans(&self) -> impl Iterator<Item = &LitFixedVec>;
 
     #[inline]
     fn var_next(&self, var: Var) -> Var {
@@ -97,13 +97,20 @@ pub trait TransysIf {
 
     #[inline]
     fn statistic(&self) -> String {
+        let mut num_cls = 0;
+        let mut num_lits = 0;
+        for cls in self.trans() {
+            num_cls += 1;
+            num_lits += cls.len();
+        }
         format!(
-            "{} vars, {} inputs, {} latches, {} clauses, {} constraints",
+            "{} vars, {} inputs, {} latches, {} constraints, {} clauses and {} lits in cnf",
             self.max_var(),
             self.input().count(),
             self.latch().count(),
-            self.trans().count(),
             self.constraint().count(),
+            num_cls,
+            num_lits
         )
     }
 
@@ -174,7 +181,7 @@ impl TransysIf for Transys {
     }
 
     #[inline]
-    fn trans(&self) -> impl Iterator<Item = &LitVec> {
+    fn trans(&self) -> impl Iterator<Item = &LitFixedVec> {
         self.rel.clause()
     }
 
@@ -223,7 +230,7 @@ impl Transys {
 
     pub fn add_init_var(&mut self) -> Var {
         let iv = self.new_var();
-        self.add_latch(iv, Some(Lit::constant(true)), Lit::constant(false));
+        self.add_latch(iv, Some(Lit::TRUE), Lit::FALSE);
         iv
     }
 

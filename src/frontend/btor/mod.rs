@@ -3,7 +3,7 @@ mod array;
 use super::Frontend;
 use crate::{
     McBlCertificate, McWlCertificate,
-    transys::{self as bl},
+    transys::{self as bl, Transys},
     wltransys::{
         WlTransys,
         bitblast::BitblastMap,
@@ -17,7 +17,7 @@ use giputils::hash::{GHashMap, GHashSet};
 use log::{debug, error};
 use logicrs::{
     LboolVec, VarSymbols,
-    fol::{self, BvTermValue, Term, TermValue},
+    fol::{self, Term, TermValue},
 };
 use std::{fmt::Display, mem::take, path::Path, process::Command};
 
@@ -88,6 +88,7 @@ pub struct BtorFrontend {
     no_next: GHashSet<Term>,
     rst: Restore,
     tf: WlTransformStack,
+    ts: Option<Transys>,
     bb_rst: Option<BitblastMap>,
 }
 
@@ -112,6 +113,7 @@ impl BtorFrontend {
             no_next,
             rst,
             tf: WlTransformStack::new(),
+            ts: None,
             bb_rst: None,
         }
     }
@@ -155,9 +157,12 @@ impl BtorFrontend {
             }
             let parts: Vec<&str> = line.split_whitespace().collect();
             let id = parts[0].parse::<usize>().unwrap();
+            let term = if is_state {
+                self.owts.latch[id].clone()
+            } else {
+                self.owts.input[id].clone()
+            };
             if parts.len() == 3 {
-                assert!(is_state);
-                let term = self.owts.latch[id].clone();
                 let (index_width, _) = term.sort().array();
                 let index = parts[1]
                     .strip_prefix('[')
@@ -167,32 +172,32 @@ impl BtorFrontend {
                 let index = usize::from_str_radix(index, 2).unwrap();
                 let val = LboolVec::from(parts[2]);
                 let entry = array_values
-                    .entry((current_frame, id))
+                    .entry((current_frame, is_state, id))
                     .or_insert_with(|| fol::ArrayValue::default_from(term.sort()));
                 entry.insert(index, val);
                 continue;
             }
             assert!(parts.len() == 2);
             let val = LboolVec::from(parts[1]);
+            let tv = TermValue::new(term, fol::Value::Bv(val));
             if is_state {
-                let term = self.owts.latch[id].clone();
-                let tv = TermValue::new(term, fol::Value::Bv(val));
                 cex.state[current_frame].push(tv);
             } else {
-                let term = self.owts.input[id].clone();
-                let bv = BvTermValue::new(term, val);
-                cex.input[current_frame].push(bv);
+                cex.input[current_frame].push(tv);
             }
         }
-        for ((k, id), val) in array_values {
-            let term = self.owts.latch[id].clone();
-            let tv = TermValue::new(term, fol::Value::Array(val));
-            cex.state[k].push(tv);
+        for ((k, is_state, id), val) in array_values {
+            let (term, frame) = if is_state {
+                (self.owts.latch[id].clone(), &mut cex.state[k])
+            } else {
+                (self.owts.input[id].clone(), &mut cex.input[k])
+            };
+            frame.push(TermValue::new(term, fol::Value::Array(val)));
         }
         for k in 0..cex.len() {
             for s in take(&mut cex.state[k]) {
                 if self.no_next.contains(s.t()) {
-                    cex.input[k].push(s.into_bv());
+                    cex.input[k].push(s);
                 } else {
                     cex.state[k].push(s);
                 }
@@ -221,6 +226,7 @@ impl Frontend for BtorFrontend {
         // panic!();
         let (ts, bb_rst) = wts.bitblast_to_ts();
         self.bb_rst = Some(bb_rst);
+        self.ts = Some(ts.clone());
         (ts, VarSymbols::new())
     }
 
@@ -242,7 +248,8 @@ impl Frontend for BtorFrontend {
                     .restore_proof(&self.wts, &bl_proof);
                 self.wl_safe_certificate(wl_proof)
             }
-            McBlCertificate::SAT(bl_cex) => {
+            McBlCertificate::SAT(mut bl_cex) => {
+                bl_cex.exact_state(self.ts.as_ref().unwrap(), true);
                 let wl_cex = self.bb_rst.as_ref().unwrap().restore_cex(&bl_cex);
                 self.wl_unsafe_certificate(wl_cex)
             }
@@ -262,7 +269,7 @@ impl BtorFrontend {
         self.tf.inv_trans_proof(&mut proof);
         let mut btor = self.owts.clone();
         for l in proof.input.iter() {
-            if !self.idmap.contains_key(l) {
+            if !self.idmap.contains_key(l) && !self.rst.is_free_next(l) {
                 btor.input.push(l.clone());
             }
         }
@@ -283,18 +290,20 @@ impl BtorFrontend {
                 cex.state[i].retain(|tv| tv.t() != iv);
             }
             let input = take(&mut cex.input[i]);
-            for lv in input {
-                if self.no_next.contains(lv.t()) {
-                    cex.state[i].push(TermValue::from(lv));
+            for tv in input {
+                if self.rst.is_free_next(tv.t()) {
+                    continue;
+                }
+                if self.no_next.contains(tv.t()) {
+                    cex.state[i].push(tv);
                 } else {
-                    cex.input[i].push(lv);
+                    cex.input[i].push(tv);
                 }
             }
         }
-        for (k, (input, state)) in cex.input.iter().zip(cex.state.iter()).enumerate() {
-            res.push(format!("#{k}"));
+        let assignments = |frame: &[TermValue]| {
             let mut idw = Vec::new();
-            for tv in state {
+            for tv in frame {
                 let id = self.idmap[tv.t()];
                 match tv.v() {
                     fol::Value::Bv(bv) => {
@@ -309,15 +318,13 @@ impl BtorFrontend {
                 }
             }
             idw.sort();
-            res.extend(idw.into_iter().map(|(_, v)| v));
+            idw.into_iter().map(|(_, v)| v)
+        };
+        for (k, (input, state)) in cex.input.iter().zip(cex.state.iter()).enumerate() {
+            res.push(format!("#{k}"));
+            res.extend(assignments(state));
             res.push(format!("@{k}"));
-            let mut idw = Vec::new();
-            for tv in input {
-                let id = self.idmap[tv.t()];
-                idw.push((id, format!("{id} {:b}", tv.v())));
-            }
-            idw.sort();
-            res.extend(idw.into_iter().map(|(_, v)| v));
+            res.extend(assignments(input));
         }
         res.push(".\n".to_string());
         Box::new(res.join("\n"))

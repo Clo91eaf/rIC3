@@ -1,7 +1,7 @@
 use super::{Transys, TransysIf};
 use crate::transys::certify::Restore;
 use giputils::hash::GHashMap;
-use logicrs::{Cnf, Lit, LitVec, Var, satif::Satif};
+use logicrs::{Cnf, Lit, LitFixedVec, LitVec, Var, satif::Satif};
 use std::mem::take;
 
 #[derive(Default, Debug, Clone)]
@@ -24,9 +24,9 @@ impl NoDepTransys {
 
     pub fn simplify(&mut self, rst: &mut Restore) {
         let mut simp_solver = cadical::CaDiCaL::new();
-        simp_solver.new_var_to(self.max_var());
-        for c in self.trans() {
-            simp_solver.add_clause(c);
+        simp_solver.reserve(self.max_var());
+        for c in self.rel.take_clauses() {
+            simp_solver.add_clause(&c);
         }
         let mut frozens = vec![Var::CONST];
         frozens.extend(self.bad.iter().map(|l| l.var()));
@@ -47,7 +47,8 @@ impl NoDepTransys {
             println!("warning: model trans simplified with unsat");
         }
         let mut trans = simp_solver.clauses();
-        trans.push(LitVec::from([Lit::constant(true)]));
+        drop(simp_solver);
+        trans.push(LitVec::from([Lit::TRUE]));
         self.rel.set_cls(trans);
         let domain_map = self.rel.rearrange(frozens);
         let map_lit = |l: &Lit| Lit::new(domain_map[l.var()], l.polarity());
@@ -114,7 +115,7 @@ impl TransysIf for NoDepTransys {
     }
 
     #[inline]
-    fn trans(&self) -> impl Iterator<Item = &LitVec> {
+    fn trans(&self) -> impl Iterator<Item = &LitFixedVec> {
         self.rel.iter()
     }
 }
@@ -128,7 +129,7 @@ impl Transys {
             init: self.init,
             bad: self.bad,
             constraint: self.constraint,
-            rel: self.rel.lower(),
+            rel: self.rel.into_cnf(),
         }
     }
 }

@@ -1,6 +1,6 @@
 # rIC3 Hardware Model Checker
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![CI](https://github.com/gipsyh/rIC3/actions/workflows/ci.yml/badge.svg)](https://github.com/gipsyh/rIC3/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/rIC3.svg?logo=rust)](https://crates.io/crates/rIC3)
 [![Docker](https://img.shields.io/docker/v/gipsyh/ric3?label=Docker&logo=docker)](https://hub.docker.com/r/gipsyh/ric3)
@@ -8,6 +8,8 @@
 ### LLM-Assisted Model Checking
 rIC3 supports LLM-accelerated model checking through invariant generation. For details, see the paper [CIll: CTI-Guided Invariant Generation via LLMs for Model Checking](https://arxiv.org/abs/2602.23389).
 The prompt and VCD inspection MCP tools are located under the `tools` directory. For a concrete example, see https://github.com/gipsyh/cill-exp
+
+The `master` branch of CIll is an actively developed version and highly unstable; development has been put on hold due to time constraints. [cill-exp](https://github.com/gipsyh/cill-exp) contains the link of relatively stable version.
 
 <p align="center">
 	<img width="500" height="auto" src="./images/CIll.svg" style="display:inline-block;">
