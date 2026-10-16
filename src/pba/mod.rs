@@ -1,8 +1,16 @@
-//! Optional, activation-core flop abstraction before the ordinary IC3 pipeline.
+//! Proof-node gate/state abstraction following observed JG PBA construction.
 //!
 //! Bounded UNSAT is used only to choose an abstraction. Only IC3 can establish
 //! unbounded safety; abstract counterexamples are replayed with every concrete
 //! transition enabled, and lifted invariants are checked before reporting SAFE.
+
+#[cfg(test)]
+mod captured;
+mod encoding;
+mod live;
+mod model;
+mod prepare;
+mod proof;
 
 use crate::{
     BlEngine, Engine, McResult,
@@ -31,7 +39,7 @@ use std::{
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PbaConfig {
-    /// Enable proof-based flop abstraction before IC3 preprocessing
+    /// Enable proof-based gate/state abstraction before IC3 preprocessing
     #[arg(long = "pba", default_value_t = false)]
     pub enabled: bool,
 
@@ -46,6 +54,10 @@ pub struct PbaConfig {
     /// Maximum spurious-counterexample refinements before concrete fallback
     #[arg(long = "pba-refine-limit", default_value_t = 8)]
     pub refine_limit: usize,
+
+    /// Export each proof selection, concrete projection and abstract model
+    #[arg(long = "pba-dump-dir", value_name = "DIR")]
+    pub dump: Option<std::path::PathBuf>,
 }
 
 impl Default for PbaConfig {
@@ -55,6 +67,7 @@ impl Default for PbaConfig {
             depth: 18,
             time_limit: 30,
             refine_limit: 8,
+            dump: None,
         }
     }
 }
@@ -115,207 +128,94 @@ impl Budget {
 const MAX_UNROLL_VARS: usize = 2_000_000;
 const MAX_UNROLL_CLAUSES: usize = 8_000_000;
 
-fn within_unroll_limit(ts: &Transys, depth: usize) -> bool {
-    (usize::from(ts.max_var()) + ts.latch.len() + 1).saturating_mul(depth.saturating_add(1))
-        <= MAX_UNROLL_VARS
-        && (ts.trans().count() + ts.constraint.len() + 2 * ts.latch.len())
-            .saturating_mul(depth.saturating_add(1))
-            <= MAX_UNROLL_CLAUSES
-}
-
-/// Optional connections are grouped by next-state variable (including shared
-/// and complemented next expressions). An activation enables its entire group
-/// at every frame, exactly as required for a time-independent abstraction.
-fn core_latches(ts: &Transys, unroll: &TransysUnroll<Transys>, solver: &CaDiCaL) -> GHashSet<Var> {
-    ts.latch
-        .iter()
-        .copied()
-        .filter(|q| solver.unsat_has(unroll.opt[&ts.next[q].var()].lit()))
-        .collect()
-}
-
-fn seed_abstraction(ts: &Transys, cfg: &PbaConfig, seed: u64, budget: &Budget) -> GHashSet<Var> {
-    let concrete = || ts.latch.iter().copied().collect();
-    if budget.stopped() || !within_unroll_limit(ts, 0) {
-        return concrete();
-    }
-    let mut unroll = TransysUnroll::new(ts);
-    unroll.enable_optional_connect();
-    let mut solver = CaDiCaL::new();
-    solver.set_seed(seed);
-    solver.reserve(unroll.max_var);
-    ts.load_init(&mut solver);
-    unroll.load_trans(&mut solver, 0, true);
-    let mut assumptions: Vec<_> = unroll.opt.values().map(|v| v.lit()).collect();
-    assumptions.sort_unstable();
-    let mut keep = GHashSet::new();
-    let mut proved = false;
-    // Query 0, 1, 2, 4, 8, ... and the requested final depth. Accumulate cores
-    // so the seed preserves every bounded proof obtained in this phase.
-    let mut bounds = vec![0];
-    let mut depth = 1;
-    while depth < cfg.depth as usize {
-        bounds.push(depth);
-        depth *= 2;
-    }
-    if cfg.depth > 0 {
-        bounds.push(cfg.depth as usize);
-    }
-    for bound in bounds {
-        if budget.stopped() || !within_unroll_limit(ts, bound) {
-            break;
-        }
-        while unroll.num_unroll < bound {
-            unroll.unroll();
-            solver.reserve(unroll.max_var);
-            unroll.load_trans(&mut solver, unroll.num_unroll, true);
-            if budget.stopped() {
-                break;
-            }
-        }
-        if budget.stopped() {
-            break;
-        }
-        let goal = unroll.lits_next(&ts.bad, bound).collect();
-        match budget.solve(&mut solver, &assumptions, vec![goal]) {
-            Some(false) => {
-                proved = true;
-                keep.extend(core_latches(ts, &unroll, &solver));
-                info!(
-                    "PBA bound {bound}: UNSAT, retaining {}/{} latches",
-                    keep.len(),
-                    ts.latch.len()
-                );
-            }
-            Some(true) => {
-                info!("PBA bound {bound}: concrete counterexample exists; ending core extraction");
-                break;
-            }
-            None => {
-                info!("PBA core extraction interrupted or budget exhausted");
-                break;
-            }
-        }
-    }
-    if proved { keep } else { concrete() }
-}
-
-/// Preserve variable identities for proof lifting and replay. Removed state
-/// becomes a fresh choice each cycle. Initial equalities in the abstract cone
-/// (also relational initializers) remain mandatory only on the first cycle;
-/// unknown init stays unknown. All environment constraints are retained.
-fn abstract_model(ts: &Transys, keep: &GHashSet<Var>) -> Transys {
-    let mut abs = ts.clone();
-    let mut initial = Vec::new();
-    for &q in &ts.latch {
-        if !keep.contains(&q) {
-            abs.input.push(q);
-            abs.next.remove(&q);
-            if let Some(init) = abs.init.remove(&q) {
-                initial.push((q, init));
-            }
-        }
-    }
-    abs.latch.retain(|q| keep.contains(q));
-    // Do not keep otherwise dead cut state alive just to constrain its first
-    // input value. Follow initial expressions too: a retained state may have
-    // a relational initializer that depends on a cut state's initial value.
-    let mut needed = GHashSet::new();
-    let mut queue: Vec<_> = abs
-        .bad
-        .iter()
-        .chain(abs.constraint.iter())
-        .chain(abs.justice.iter())
-        .map(|l| l.var())
-        .collect();
-    while let Some(v) = queue.pop() {
-        if !needed.insert(v) {
-            continue;
-        }
-        if let Some(n) = abs.next.get(&v) {
-            queue.push(n.var());
-        }
-        if let Some(i) = ts.init.get(&v) {
-            queue.push(i.var());
-        }
-        queue.extend(abs.rel.dep(v).iter().copied());
-    }
-    initial.retain(|(q, _)| needed.contains(q));
-    if !initial.is_empty() {
-        let start = abs.add_init_var().lit();
-        for (q, init) in initial {
-            let equal = abs.rel.new_xnor(q.lit(), init);
-            let guard = abs.rel.new_imply(start, equal);
-            abs.constraint.push(guard);
-        }
-    }
-    abs
-}
-
 enum Replay {
     Real(BlCex),
-    Spurious(GHashSet<Var>),
-    Unavailable,
+    Spurious,
+    Unavailable(&'static str),
 }
 
 fn replay(ts: &Transys, trace: &BlCex, budget: &Budget) -> Replay {
     let Some(depth) = trace.len().checked_sub(1) else {
-        return Replay::Unavailable;
+        return Replay::Unavailable("empty abstract trace");
     };
-    bounded_query(ts, depth, Some(trace), budget)
-}
-
-fn bounded_query(ts: &Transys, depth: usize, trace: Option<&BlCex>, budget: &Budget) -> Replay {
-    if budget.stopped() || !within_unroll_limit(ts, depth) {
-        return Replay::Unavailable;
-    }
-    let mut unroll = TransysUnroll::new(ts);
-    unroll.enable_optional_connect();
-    let mut solver = CaDiCaL::new();
-    solver.reserve(unroll.max_var);
-    ts.load_init(&mut solver);
     let inputs: GHashSet<_> = ts.input.iter().copied().collect();
+    let mut e = live::Encoding::new(ts, CaDiCaL::new());
+    e.initial();
+    let mut goal = LitVec::new();
     for k in 0..=depth {
-        if k > 0 {
-            unroll.unroll();
+        if budget.stopped() {
+            return Replay::Unavailable("concrete replay time limit");
         }
-        solver.reserve(unroll.max_var);
-        unroll.load_trans(&mut solver, k, true);
-        // Cut-state values are internal abstraction choices, not primary
-        // inputs to the concrete circuit. Recompute them existentially to
-        // avoid refining irrelevant state just to reproduce arbitrary noise.
-        if let Some(trace) = trace {
-            for &lit in trace.input[k]
-                .iter()
-                .filter(|l| inputs.contains(&l.var()))
-                .chain(trace.state[k].iter().filter(|l| ts.is_latch(l.var())))
-            {
-                solver.add_clause(&[unroll.lit_next(lit, k)]);
+        e.constraints(k);
+        goal = e.goal(k);
+        // Only retained state and true primary inputs constrain replay.
+        // Cut gate/state inputs are existentially completed on the concrete TS.
+        for &lit in trace.input[k]
+            .iter()
+            .filter(|l| inputs.contains(&l.var()))
+            .chain(trace.state[k].iter().filter(|l| ts.is_latch(l.var())))
+        {
+            let mapped = e.reference(lit, k);
+            e.clause(&[mapped]);
+        }
+        if !e.resources_ok() {
+            return Replay::Unavailable("concrete replay unroll limit");
+        }
+        if k < depth {
+            e.transition(k);
+        }
+    }
+    match budget.solve(&mut e.solver, &[], vec![goal]) {
+        Some(true) => {
+            let concrete = e.trace(depth);
+            match validate_trace(ts, &concrete, budget) {
+                Some(true) => Replay::Real(concrete),
+                Some(false) => Replay::Unavailable("counterexample rejected by original CNF"),
+                None => Replay::Unavailable("counterexample validation time limit"),
             }
         }
-        if budget.stopped() {
-            return Replay::Unavailable;
-        }
-    }
-    let mut assumptions: Vec<_> = unroll.opt.values().map(|v| v.lit()).collect();
-    assumptions.sort_unstable();
-    let goal = unroll.lits_next(&ts.bad, depth).collect();
-    match budget.solve(&mut solver, &assumptions, vec![goal]) {
-        Some(true) => {
-            let mut cex = unroll.cex(&solver);
-            cex.bad_id = ts
-                .bad
-                .iter()
-                .position(|&b| solver.sat_value(unroll.lit_next(b, depth)) == Some(true))
-                .unwrap();
-            Replay::Real(cex)
-        }
-        Some(false) => Replay::Spurious(core_latches(ts, &unroll, &solver)),
-        None => Replay::Unavailable,
+        Some(false) => Replay::Spurious,
+        None => Replay::Unavailable("concrete replay SAT time limit"),
     }
 }
 
-fn lift_proof(ts: &Transys, mut proof: BlProof) -> BlProof {
+// Check the completed witness with the original, unflattened CNF. Complete
+// state vectors let us check one step at a time, without another deep unroll.
+fn validate_trace(ts: &Transys, trace: &BlCex, budget: &Budget) -> Option<bool> {
+    let last = trace.len().checked_sub(1)?;
+    if trace.bad_id >= ts.bad.len() {
+        return Some(false);
+    }
+    for k in 0..=last {
+        let mut solver = CaDiCaL::new();
+        solver.reserve(ts.max_var());
+        ts.load_trans(&mut solver, true);
+        if k == 0 {
+            ts.load_init(&mut solver);
+        }
+        for &lit in trace.input[k].iter().chain(trace.state[k].iter()) {
+            solver.add_clause(&[lit]);
+        }
+        if k < last {
+            for &next in &trace.state[k + 1] {
+                solver.add_clause(&[ts.next[&next.var()].not_if(!next.polarity())]);
+            }
+        } else {
+            solver.add_clause(&[ts.bad[trace.bad_id]]);
+        }
+        match budget.solve(&mut solver, &[], vec![])? {
+            true => (),
+            false => return Some(false),
+        }
+    }
+    Some(true)
+}
+
+fn lift_proof(
+    ts: &Transys,
+    mut proof: BlProof,
+    projection: &giputils::hash::GHashMap<Var, Var>,
+) -> BlProof {
     // merge() only appends roots with fresh variables. Force an alias even if
     // the worker's entire invariant simplified to an existing literal.
     let bads = proof.bad.clone();
@@ -329,7 +229,12 @@ fn lift_proof(ts: &Transys, mut proof: BlProof) -> BlProof {
     // the concrete model. IC3's certificate includes their violations in bad.
     proof.constraint.clear();
     let mut result = ts.clone();
-    result.merge(&proof, |v| (v <= ts.max_var()).then_some(v));
+    result.merge(&proof, |v| {
+        projection
+            .get(&v)
+            .copied()
+            .or_else(|| (v <= ts.max_var()).then_some(v))
+    });
     result.compress_bads();
     BlProof::new(result)
 }
@@ -445,120 +350,136 @@ impl PbaEngine {
         }
     }
 
+    fn accept_counterexample(&mut self, mut trace: BlCex) -> McResult {
+        trace.bad_id = self.cfg.prop.unwrap_or(trace.bad_id);
+        let depth = trace.len() - 1;
+        self.cex = Some(trace);
+        McResult::SAT(depth)
+    }
+
     fn check_with_budget(&mut self, budget: &Budget) -> McResult {
-        let start = Instant::now();
-        let mut keep = seed_abstraction(
+        use prepare::Prepared;
+        let mut generation = 0;
+        let mut abstraction = match prepare::prepare(
             &self.ts,
             &self.cfg.pba,
             self.cfg.rseed,
             &budget.capped(self.cfg.pba.time_limit),
-        );
-        info!(
-            "PBA seed: {}/{} retained latches, {:.3}s",
-            keep.len(),
-            self.ts.latch.len(),
-            start.elapsed().as_secs_f64()
-        );
+            0,
+            &mut generation,
+        ) {
+            Prepared::Model(model) => Some(model),
+            Prepared::Counterexample(trace) => return self.accept_counterexample(trace),
+            Prepared::Unavailable(reason) => {
+                info!("PBA preparation unavailable ({reason}); checking concrete model");
+                None
+            }
+        };
         let mut refinements = 0;
         loop {
             if budget.stopped() {
                 return McResult::Unknown(self.completed_depth);
             }
-            let concrete = keep.len() == self.ts.latch.len();
-            let model = abstract_model(&self.ts, &keep);
+            let model = abstraction
+                .as_ref()
+                .map_or_else(|| self.ts.clone(), |a| a.ts.clone());
             info!(
                 "PBA checking {} model: {}",
-                if concrete { "concrete" } else { "abstract" },
+                if abstraction.is_some() {
+                    "abstract"
+                } else {
+                    "concrete"
+                },
                 model.statistic()
             );
             match self.run_inner(model, budget) {
                 McResult::UNSAT => {
-                    let proof = self.inner.as_mut().unwrap().proof();
-                    if concrete {
-                        self.proof = Some(proof);
-                        return McResult::UNSAT;
-                    }
-                    let proof = lift_proof(&self.ts, proof);
-                    match validate_proof(&proof, budget) {
-                        Some(true) => {
-                            info!(
+                    let mut proof = self.inner.as_mut().unwrap().proof();
+                    if let Some(abs) = &abstraction {
+                        proof = lift_proof(&self.ts, proof, &abs.projection);
+                        match validate_proof(&proof, budget) {
+                            Some(true) => info!(
                                 "PBA lifted invariant passed concrete initiation and consecution checks"
-                            );
-                            self.proof = Some(proof);
-                            return McResult::UNSAT;
+                            ),
+                            Some(false) => {
+                                warn!("PBA lifted proof rejected; checking concrete model");
+                                abstraction = None;
+                                continue;
+                            }
+                            None => return McResult::Unknown(self.completed_depth),
                         }
-                        Some(false) => {
-                            warn!("PBA certificate validation failed; falling back to concrete IC3")
-                        }
-                        None => return McResult::Unknown(self.completed_depth),
                     }
+                    self.proof = Some(proof);
+                    return McResult::UNSAT;
                 }
                 McResult::SAT(depth) => {
                     let trace = self.inner.as_mut().unwrap().cex();
-                    if concrete {
-                        let mut trace = trace;
-                        trace.bad_id = self.cfg.prop.unwrap_or(trace.bad_id);
-                        self.cex = Some(trace);
-                        return McResult::SAT(depth);
-                    }
-                    match replay(&self.ts, &trace, budget) {
-                        Replay::Real(mut trace) => {
-                            trace.bad_id = self.cfg.prop.unwrap_or(trace.bad_id);
-                            let depth = trace.len() - 1;
+                    let Some(abs) = &abstraction else {
+                        return self.accept_counterexample(trace);
+                    };
+                    info!("PBA replaying abstract counterexample at depth {depth}");
+                    let projected = trace.filter_map_var(|v| {
+                        abs.projection
+                            .get(&v)
+                            .copied()
+                            .or_else(|| (v <= self.ts.max_var()).then_some(v))
+                    });
+                    match replay(&self.ts, &projected, budget) {
+                        Replay::Real(trace) => return self.accept_counterexample(trace),
+                        Replay::Spurious if refinements < self.cfg.pba.refine_limit => {
                             info!(
-                                "PBA counterexample replayed on the concrete model at depth {depth}"
+                                "PBA concrete replay rejected the trace; selecting a fresh prefix proof"
                             );
-                            self.cex = Some(trace);
-                            return McResult::SAT(depth);
-                        }
-                        Replay::Spurious(core) if refinements < self.cfg.pba.refine_limit => {
-                            let before = keep.len();
-                            keep.extend(core);
-                            // A trace core excludes one witness, and may add
-                            // only one bit of a wide state. A property-wide
-                            // bounded core can eliminate all abstract bad
-                            // traces at this depth in one refinement. If the
-                            // query times out, the trace core remains valid.
-                            match bounded_query(
+                            match prepare::prepare(
                                 &self.ts,
-                                depth,
-                                None,
+                                &self.cfg.pba,
+                                self.cfg.rseed,
                                 &budget.capped(self.cfg.pba.time_limit),
+                                depth,
+                                &mut generation,
                             ) {
-                                Replay::Spurious(core) => {
+                                Prepared::Model(next) => {
+                                    if next.selected == abs.selected {
+                                        warn!(
+                                            "PBA selection unchanged after spurious depth {depth}; checking concrete model"
+                                        );
+                                        abstraction = None;
+                                    } else {
+                                        refinements += 1;
+                                        info!(
+                                            "PBA refinement {refinements}: replaced selection after spurious depth {depth}"
+                                        );
+                                        abstraction = Some(next);
+                                    }
+                                }
+                                Prepared::Counterexample(trace) => {
+                                    return self.accept_counterexample(trace);
+                                }
+                                Prepared::Unavailable(reason) => {
                                     info!(
-                                        "PBA property core at depth {depth}: {} latches",
-                                        core.len()
+                                        "PBA refinement at depth {depth} unavailable ({reason}); checking concrete model"
                                     );
-                                    keep.extend(core);
+                                    abstraction = None;
                                 }
-                                Replay::Real(mut trace) => {
-                                    trace.bad_id = self.cfg.prop.unwrap_or(trace.bad_id);
-                                    let depth = trace.len() - 1;
-                                    self.cex = Some(trace);
-                                    return McResult::SAT(depth);
-                                }
-                                Replay::Unavailable => (),
                             }
-                            if keep.len() > before {
-                                refinements += 1;
-                                info!(
-                                    "PBA refinement {refinements}: spurious depth {depth}, retaining {}/{} latches",
-                                    keep.len(),
-                                    self.ts.latch.len()
-                                );
-                                continue;
-                            }
-                            warn!("PBA replay core added no latches; falling back to concrete IC3");
                         }
-                        _ => info!(
-                            "PBA replay/refinement limit reached; falling back to concrete IC3"
-                        ),
+                        Replay::Spurious => {
+                            info!(
+                                "PBA refinement limit {} reached at depth {depth}; checking concrete model",
+                                self.cfg.pba.refine_limit
+                            );
+                            abstraction = None;
+                        }
+                        Replay::Unavailable(reason) => {
+                            info!(
+                                "PBA concrete replay unavailable at depth {depth} ({reason}); checking concrete model"
+                            );
+                            abstraction = None;
+                        }
                     }
                 }
                 McResult::Unknown(_) => return McResult::Unknown(self.completed_depth),
             }
-            keep.extend(self.ts.latch.iter().copied());
         }
     }
 }

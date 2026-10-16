@@ -63,35 +63,48 @@ rIC3 can be compiled on both Linux and macOS.
   ric3 check model.btor2 ic3 --pba --pba-depth 18 --pba-time-limit 30 --time-limit 300
   ```
 
-  After parsing/bit-blasting, PBA uses CaDiCaL failed-assumption cores from
-  bounded UNSAT queries at depths 0, 1, 2, 4, 8, 16 and 18 to select state
-  connections. Cut latches become inputs with initial equalities in the
-  abstract cone guarded by a first-cycle pulse. Environment constraints remain
-  in the model. The resulting abstraction goes through the existing COI,
-  CNF/BVE, SCORR and FRTS preprocessing before IC3.
+  After parsing/bit-blasting, PBA follows the observed JasperGold 2021.03
+  proof-selection flow. Each round proves that no bad state occurs anywhere
+  in the bounded prefix, walks the UNSAT proof back to its original clauses,
+  and marks their source state, input and gate nodes. It completes paths to
+  the property, constraints and selected next-state roots. Unselected nodes
+  encountered on those paths become shared per-cycle inputs. Known cut-node
+  initial values are guarded by a first-cycle pulse; unknown values stay free.
+  Relational BTOR initializers are retained as relations.
 
-  Abstract counterexamples are replayed on the concrete transition system.
-  Spurious traces restore state connections using a trace core and, when
-  feasible, a property-wide bounded core at the counterexample depth.
-  `--pba-refine-limit` (default 8)
-  caps refinements before falling back to concrete IC3. Abstract SAFE results
-  require a lifted certificate to pass concrete initiation and induction SAT
-  checks. Bounded UNSAT alone never produces a SAFE result. `--cert` and
-  `--cex` refer to the concrete model.
+  Each round replaces the previous selection, so refinement can remove nodes.
+  An incremental BMC probe checks the next ten frames with a shared 10,000
+  conflict budget; a leak triggers a fresh concrete prefix proof at that depth.
+  An inconclusive probe hands the model to IC3. The model then goes through
+  the existing COI, CNF/BVE, SCORR and FRTS preprocessing. Abstract IC3 traces
+  are replayed on the concrete system; spurious traces trigger the same fresh
+  selection process. `--pba-refine-limit` (default 8) caps IC3 restarts before
+  concrete fallback. Bounded UNSAT never establishes unbounded safety.
 
-  The 30-second PBA budget covers seed extraction and caps each property-wide
-  refinement query; `--time-limit` is
-  shared by extraction, IC3 restarts, replay and proof validation. A zero PBA
-  budget skips abstraction. CNF growth is capped at two million unrolled
-  variables and eight million estimated clauses; exceeding a cap uses the
-  last seed or falls back to concrete checking. Existing preprocessing may
-  still delay cancellation while constructing an IC3 instance.
+  Proof cores are rechecked with up to four fresh proofs to remove avoidable
+  dependencies. Every selected abstraction is checked against its bounded prefix. Abstract SAFE results require a lifted
+  certificate to pass concrete initiation and induction checks. `--cert` and
+  `--cex` refer to the concrete model. `--pba-dump-dir DIR` saves each round's
+  model, proof seeds, completed selection and concrete projection.
 
-  This implementation abstracts flop connections, grouped when they share a
-  next-state variable. It does not reproduce JasperGold's gate-level PBA
-  model. It currently supports the standalone IC3 flow, without lemma
-  exchange or IC3 local proofs. Library callers enable it through
-  `create_bl_engine` or `pba::PbaEngine`, rather than `IC3::new`.
+  The 30-second PBA budget covers the preparation loop and caps each later
+  refinement preparation; `--time-limit` is shared by preparation, IC3,
+  replay and proof validation. `--pba-depth` defaults to 18 (maximum 128).
+  A zero PBA budget skips abstraction. CNF growth is capped at two million
+  actually encoded SAT variables and eight million clauses. Completed concrete
+  witnesses are checked step by step against the original unflattened CNF.
+  Existing IC3 preprocessing may delay cancellation during construction.
+
+  Implementation references are recorded beside the corresponding functions:
+  JG proof query `0x8b47d0`, original-clause visitor `0x991a30`, path completion
+  `0x8aa620`, rewriting `0x8ac740`, and leak probing `0x8cc510`. The constructor
+  is regression-checked against nine captured p530 selections, including the
+  final 310 source latches, 352 gate cuts and 795 total cuts. This checks model
+  construction with recorded seeds; autonomous CaDiCaL proof selection is
+  different from JG's SAT backend and does not promise the same seeds or time.
+  The optional real-capture test uses `RIC3_JG_CAPTURE` (see `src/pba/captured.rs`).
+  PBA supports standalone IC3 without lemma exchange or IC3 local proofs.
+  Library callers use `create_bl_engine` or `pba::PbaEngine`, not `IC3::new`.
 
 ### Docker
 - build image: ```docker build -t ric3 .```

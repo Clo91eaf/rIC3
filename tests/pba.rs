@@ -18,11 +18,14 @@ const UNSAFE: &str = "1 sort bitvec 1
 3 one 1
 4 state 1 q
 5 state 1 r
-6 init 1 4 2
-7 init 1 5 2
-8 next 1 4 3
-9 next 1 5 4
-10 bad 5
+6 state 1 s
+7 init 1 4 2
+8 init 1 5 2
+9 init 1 6 2
+10 next 1 4 3
+11 next 1 5 4
+12 next 1 6 5
+13 bad 6
 ";
 
 fn run(model: &str, args: &[&str]) -> String {
@@ -63,7 +66,7 @@ fn opt_in_pba_exports_a_safe_certificate() {
             "1",
         ],
     );
-    assert!(output.contains("PBA seed:"), "{output}");
+    assert!(output.contains("PBA model depth"), "{output}");
     assert!(output.contains("lifted invariant passed"), "{output}");
     assert!(output.ends_with("UNSAT\n"), "{output}");
     let model = btor::Btor::from_file(&certificate);
@@ -94,8 +97,11 @@ fn spurious_counterexample_is_not_exported() {
     let output = run(UNSAFE, &["--cex", "ic3", "--pba", "--pba-depth", "0"]);
     assert!(output.contains("PBA refinement 1"), "{output}");
     assert!(output.contains("\nSAT\nsat\nb0\n"), "{output}");
-    assert!(output.contains("counterexample at depth 2"), "{output}");
-    assert!(!output.contains("counterexample at depth 1"), "{output}");
+    assert!(output.contains("counterexample at depth 3"), "{output}");
+    assert!(
+        !output.contains("found a counterexample at depth 2"),
+        "{output}"
+    );
 }
 
 #[test]

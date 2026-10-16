@@ -40,6 +40,26 @@ fn sat_frames(ts: &Transys, frames: &[Vec<Lit>]) -> bool {
     s.solve(&[])
 }
 
+fn projected_frames(abs: &model::Abstraction, frames: &[Vec<Lit>]) -> Vec<Vec<Lit>> {
+    frames
+        .iter()
+        .map(|frame| {
+            let mut result = Vec::new();
+            for &lit in frame {
+                if abs.ts.is_latch(lit.var()) || abs.ts.input.contains(&lit.var()) {
+                    result.push(lit);
+                }
+                for (&mapped, &source) in abs.projection.iter() {
+                    if source == lit.var() && abs.ts.input.contains(&mapped) {
+                        result.push(lit.map_var(|_| mapped));
+                    }
+                }
+            }
+            result
+        })
+        .collect()
+}
+
 #[test]
 fn abstraction_preserves_initial_values_relations_and_environment() {
     for init in [None, Some(Lit::FALSE), Some(Lit::TRUE)] {
@@ -56,7 +76,7 @@ fn abstraction_preserves_initial_values_relations_and_environment() {
         ts.constraint.push(environment);
         ts.bad.push(r.lit());
         for keep in [GHashSet::new(), [r].into_iter().collect()] {
-            let abs = abstract_model(&ts, &keep);
+            let abs = model::build(&ts, model::complete_selection(&ts, &keep));
             for bits in 0..8 {
                 let frame: Vec<_> = [q, r, input]
                     .into_iter()
@@ -65,7 +85,7 @@ fn abstraction_preserves_initial_values_relations_and_environment() {
                     .collect();
                 assert_eq!(
                     sat_frames(&ts, std::slice::from_ref(&frame)),
-                    sat_frames(&abs, &[frame])
+                    sat_frames(&abs.ts, &projected_frames(&abs, &[frame]))
                 );
             }
             // Exhaustively check two-cycle concrete trace inclusion.
@@ -80,7 +100,7 @@ fn abstraction_preserves_initial_values_relations_and_environment() {
                     })
                     .collect();
                 if sat_frames(&ts, &frames) {
-                    assert!(sat_frames(&abs, &frames));
+                    assert!(sat_frames(&abs.ts, &projected_frames(&abs, &frames)));
                 }
             }
         }
@@ -90,24 +110,33 @@ fn abstraction_preserves_initial_values_relations_and_environment() {
 #[test]
 fn cut_initial_value_is_free_after_the_first_cycle() {
     let (ts, q, _) = safe_model();
-    let abs = abstract_model(&ts, &GHashSet::new());
-    assert!(!sat_frames(&abs, &[vec![q.lit()]]));
-    assert!(sat_frames(&abs, &[vec![!q.lit()], vec![q.lit()]]));
+    let abs = model::build(&ts, model::complete_selection(&ts, &GHashSet::new()));
+    assert!(!sat_frames(
+        &abs.ts,
+        &projected_frames(&abs, &[vec![q.lit()]])
+    ));
+    assert!(sat_frames(
+        &abs.ts,
+        &projected_frames(&abs, &[vec![!q.lit()], vec![q.lit()]])
+    ));
     assert!(!sat_frames(&ts, &[vec![!q.lit()], vec![q.lit()]]));
 }
 
 #[test]
 fn bounded_core_keeps_relevant_state_and_cuts_noise() {
     let (ts, q, noise) = safe_model();
-    let keep = seed_abstraction(&ts, &cfg(4).pba, 0, &budget());
+    let encoding::ProofResult::Unsat(seed) = encoding::prove(&ts, 4, 0, &budget()) else {
+        panic!()
+    };
+    let keep = model::complete_selection(&ts, &seed);
     assert!(keep.contains(&q));
     assert!(!keep.contains(&noise));
-    let abs = abstract_model(&ts, &keep);
+    let abs = model::build(&ts, keep);
     assert!(
-        abs.constraint.is_empty(),
+        abs.ts.constraint.is_empty(),
         "dead initial guards must not retain cut noise"
     );
-    assert_eq!(abs.latch, vec![q]);
+    assert_eq!(abs.ts.latch, vec![q]);
 }
 
 #[test]
@@ -127,11 +156,8 @@ fn property_core_covers_input_choices_beyond_one_spurious_trace() {
         state: vec![LitVec::new(); 2],
         bad_id: 0,
     };
-    let Replay::Spurious(trace_core) = replay(&ts, &trace, &budget()) else {
-        panic!()
-    };
-    assert!(trace_core.contains(&r) && !trace_core.contains(&q));
-    let Replay::Spurious(property_core) = bounded_query(&ts, 1, None, &budget()) else {
+    assert!(matches!(replay(&ts, &trace, &budget()), Replay::Spurious));
+    let encoding::ProofResult::Unsat(property_core) = encoding::prove(&ts, 1, 0, &budget()) else {
         panic!()
     };
     assert!(property_core.contains(&q) && property_core.contains(&r));
@@ -145,11 +171,17 @@ fn safe_abstract_proof_is_lifted_and_validated() {
         // guard and certificate extension with an auxiliary pulse latch.
         ts.bad = LitVec::from(ts.rel.new_and([q.lit(), noise.lit()]));
         let mut cfg = cfg(2);
-        cfg.pba.depth = 1;
         cfg.preproc.preproc = preproc;
+        // Fix the abstraction for this certificate test: a different valid
+        // SAT proof may legitimately retain both latches and need no pulse.
+        let abs = model::build(
+            &ts,
+            model::complete_selection(&ts, &[q].into_iter().collect()),
+        );
+        assert!(abs.ts.latch.iter().any(|q| !ts.latch.contains(q)));
         let mut engine = PbaEngine::new(cfg, ts.clone(), VarSymbols::new());
-        assert_eq!(engine.check(), McResult::UNSAT);
-        let proof = engine.proof();
+        assert_eq!(engine.run_inner(abs.ts, &budget()), McResult::UNSAT);
+        let proof = lift_proof(&ts, engine.inner.as_mut().unwrap().proof(), &abs.projection);
         assert_eq!(validate_proof(&proof, &budget()), Some(true));
         assert!(ts.latch.iter().all(|q| proof.latch.contains(q)));
         assert!(ts.input.iter().all(|i| proof.input.contains(i)));
@@ -320,4 +352,36 @@ fn small_circuits_match_exhaustive_bmc_with_valid_certificates() {
             }
         }
     }
+}
+
+#[test]
+fn original_cnf_rejects_invalid_completed_witnesses() {
+    let mut ts = Transys::new();
+    let q = ts.new_var();
+    ts.add_latch(q, Some(Lit::FALSE), Lit::TRUE);
+    ts.bad.push(q.lit());
+    let trace = |values: &[bool]| BlCex {
+        input: vec![LitVec::new(); values.len()],
+        state: values
+            .iter()
+            .map(|&b| LitVec::from(q.lit().not_if(!b)))
+            .collect(),
+        bad_id: 0,
+    };
+    assert_eq!(
+        validate_trace(&ts, &trace(&[false, true]), &budget()),
+        Some(true)
+    );
+    assert_eq!(
+        validate_trace(&ts, &trace(&[true, true]), &budget()),
+        Some(false)
+    );
+    assert_eq!(
+        validate_trace(&ts, &trace(&[false, false, true]), &budget()),
+        Some(false)
+    );
+    assert_eq!(
+        validate_trace(&ts, &trace(&[false]), &budget()),
+        Some(false)
+    );
 }
