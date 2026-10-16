@@ -7,11 +7,54 @@ use crate::{
     wltransys::WlTransys,
 };
 use giputils::hash::GHashMap;
-use log::info;
+use log::{info, warn};
 use logicrs::{
     Lit, Var,
     fol::{FolOp, Sort, Term},
 };
+
+// Word-level simplification and lowering recursively visit terms. Bound the
+// expression we would build before creating any Terms, including the folds
+// inside a single wide CNF definition. Keep deep models in their original CNF.
+const MAX_EXPRESSION_DEPTH: usize = 1024;
+const NORMALIZE_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+fn bounded_expression_depth(ts: &Transys) -> bool {
+    let mut depth = vec![0usize; usize::from(ts.max_var()) + 1];
+    for v in ts.rel.var_iter_woc() {
+        if ts.rel[v].is_empty() {
+            continue;
+        }
+        let mut output = 0;
+        for clause in ts.rel[v].iter().filter(|c| c.contains(&v.lit())) {
+            let mut product = 0;
+            for lit in clause.iter().filter(|l| l.var() != v) {
+                // Negation, then the left-associated conjunction fold.
+                product = product.max(depth[usize::from(lit.var())] + 1) + 1;
+                if product > MAX_EXPRESSION_DEPTH {
+                    return false;
+                }
+            }
+            output = output.max(product) + 1;
+            if output > MAX_EXPRESSION_DEPTH {
+                return false;
+            }
+        }
+        // XOR/XNOR recognition can replace the positive-clause expression.
+        let parity = ts
+            .rel
+            .dep(v)
+            .iter()
+            .map(|d| depth[usize::from(*d)] + 2)
+            .max()
+            .unwrap_or(0);
+        depth[usize::from(v)] = output.max(parity);
+        if depth[usize::from(v)] > MAX_EXPRESSION_DEPTH {
+            return false;
+        }
+    }
+    true
+}
 
 fn literal(map: &[Option<Term>], l: Lit) -> Term {
     map[usize::from(l.var())]
@@ -175,12 +218,26 @@ fn rebuild(ts: &Transys, projection: &GHashMap<Var, Var>) -> Option<(Transys, GH
 }
 
 pub(super) fn apply(abs: &mut Abstraction) -> bool {
+    if !bounded_expression_depth(&abs.ts) {
+        info!(
+            "PBA frontend normalization skipped: expression depth exceeds {MAX_EXPRESSION_DEPTH}; retaining original CNF"
+        );
+        return false;
+    }
     let result = std::thread::scope(|scope| {
-        scope
-            .spawn(|| rebuild(&abs.ts, &abs.projection))
-            .join()
-            .unwrap()
+        std::thread::Builder::new()
+            .name("pba-normalize".into())
+            .stack_size(NORMALIZE_STACK_BYTES)
+            .spawn_scoped(scope, || rebuild(&abs.ts, &abs.projection))
+            .map(|worker| worker.join().unwrap())
     });
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            warn!("PBA frontend normalization skipped: cannot start worker: {error}");
+            return false;
+        }
+    };
     let Some((ts, projection)) = result else {
         info!("PBA frontend normalization skipped: opaque/nonfunctional CNF definition");
         return false;
@@ -196,6 +253,37 @@ mod tests {
     use super::*;
     use crate::frontend::{Frontend, btor::BtorFrontend};
     use logicrs::LitVvec;
+
+    #[test]
+    fn wide_gate_keeps_original_cnf_without_building_a_deep_term_fold() {
+        let mut ts = Transys::new();
+        let inputs: Vec<_> = (0..12_000)
+            .map(|_| {
+                let v = ts.new_var();
+                ts.add_input(v);
+                v.lit()
+            })
+            .collect();
+        ts.bad.push(ts.rel.new_and(inputs));
+        let before = serde_json::to_value(&ts).unwrap();
+        let projection = ts
+            .input
+            .iter()
+            .map(|v| (*v, *v))
+            .chain([(Var::CONST, Var::CONST)])
+            .collect();
+        let mut abs = Abstraction {
+            ts,
+            projection,
+            selected: Default::default(),
+            cuts: 0,
+            cut_gates: 0,
+        };
+        let projection = abs.projection.clone();
+        assert!(!apply(&mut abs));
+        assert_eq!(serde_json::to_value(&abs.ts).unwrap(), before);
+        assert_eq!(abs.projection, projection);
+    }
 
     #[test]
     fn leaves_have_explicit_projections_after_renumbering() {

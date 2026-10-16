@@ -80,7 +80,9 @@ rIC3 can be compiled on both Linux and macOS.
   the BTOR frontend's word-level simplification and Boolean encoding. This
   preserves XOR/XNOR structure and gives IC3 the same encoding as a standalone
   one-bit BTOR export. `--pba-normalize false` disables this step; opaque or
-  nonfunctional CNF definitions retain their original representation. Abstract IC3 traces
+  nonfunctional CNF definitions retain their original representation. A
+  conservative expression-depth check also keeps deep or wide definitions in
+  CNF, avoiding stack overflow in recursive frontend passes. Abstract IC3 traces
   are replayed on the concrete system; spurious traces trigger the same fresh
   selection process. `--pba-refine-limit` (default 8) caps IC3 restarts before
   concrete fallback. Bounded UNSAT never establishes unbounded safety.

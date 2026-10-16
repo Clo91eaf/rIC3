@@ -112,3 +112,53 @@ fn pba_is_off_by_default_and_respects_zero_overall_budget() {
     let output = run(UNSAFE, &["--cex", "ic3", "--pba", "--time-limit", "0"]);
     assert!(output.ends_with("UNKNOWN\n2\n"), "{output}");
 }
+
+#[test]
+fn deep_aig_pba_falls_back_to_cnf_and_proves_safety() {
+    // q starts false and holds its value, so the AND of q and all inputs is
+    // unreachable. PBA retains the entire q-to-bad path. Recursive frontend
+    // normalization of this legal circuit used to abort with a stack overflow.
+    const GATES: usize = 12_000;
+    let q = 2 * (GATES + 1);
+    let mut model = format!("aag {} {GATES} 1 0 {GATES} 1\n", 2 * GATES + 1);
+    for input in 1..=GATES {
+        model.push_str(&format!("{}\n", 2 * input));
+    }
+    model.push_str(&format!("{q} {q} 0\n{}\n", 2 * (2 * GATES + 1)));
+    let mut previous = q;
+    for input in 1..=GATES {
+        let gate = 2 * (GATES + 1 + input);
+        model.push_str(&format!("{gate} {previous} {}\n", 2 * input));
+        previous = gate;
+    }
+    let mut file = tempfile::Builder::new().suffix(".aag").tempfile().unwrap();
+    file.write_all(model.as_bytes()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ric3"))
+        .arg("check")
+        .arg(file.path())
+        .args([
+            "--ui",
+            "false",
+            "ic3",
+            "--pba",
+            "--preproc",
+            "false",
+            "--time-limit",
+            "10",
+        ])
+        .env("RUST_LOG", "info")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("expression depth exceeds"),
+        "must skip recursive normalization: {stdout}"
+    );
+    assert!(stdout.contains("lifted invariant passed"), "{stdout}");
+    assert!(stdout.ends_with("UNSAT\n"), "{stdout}");
+}
