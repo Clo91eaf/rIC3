@@ -173,9 +173,11 @@ pub(super) fn build(ts: &Transys, selected: GHashSet<Var>) -> Abstraction {
     };
     b.result.new_var_to(ts.max_var());
     b.forward.insert(Var::CONST, Var::CONST);
+    b.projection.insert(Var::CONST, Var::CONST);
     for &v in ts.input.iter().chain(ts.latch.iter()) {
         if b.selected.contains(&v) {
             b.forward.insert(v, v);
+            b.projection.insert(v, v);
             if ts.is_latch(v) {
                 b.result.latch.push(v);
             } else {

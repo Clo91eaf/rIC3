@@ -75,8 +75,12 @@ rIC3 can be compiled on both Linux and macOS.
   Each round replaces the previous selection, so refinement can remove nodes.
   An incremental BMC probe checks the next ten frames with a shared 10,000
   conflict budget; a leak triggers a fresh concrete prefix proof at that depth.
-  An inconclusive probe hands the model to IC3. The model then goes through
-  the existing COI, CNF/BVE, SCORR and FRTS preprocessing. Abstract IC3 traces
+  An inconclusive probe hands the model to IC3. Before the existing COI,
+  CNF/BVE, SCORR and FRTS preprocessing, the abstraction is rebuilt through
+  the BTOR frontend's word-level simplification and Boolean encoding. This
+  preserves XOR/XNOR structure and gives IC3 the same encoding as a standalone
+  one-bit BTOR export. `--pba-normalize false` disables this step; opaque or
+  nonfunctional CNF definitions retain their original representation. Abstract IC3 traces
   are replayed on the concrete system; spurious traces trigger the same fresh
   selection process. `--pba-refine-limit` (default 8) caps IC3 restarts before
   concrete fallback. Bounded UNSAT never establishes unbounded safety.
@@ -85,7 +89,10 @@ rIC3 can be compiled on both Linux and macOS.
   dependencies. Every selected abstraction is checked against its bounded prefix. Abstract SAFE results require a lifted
   certificate to pass concrete initiation and induction checks. `--cert` and
   `--cex` refer to the concrete model. `--pba-dump-dir DIR` saves each round's
-  model, proof seeds, completed selection and concrete projection.
+  model, proof seeds, completed selection and concrete projection, plus the
+  normalized IC3 model and its projection. Renumbered inputs and states use
+  explicit projections; auxiliary gates and the first-cycle pulse are fresh
+  when lifting the proof to the concrete model.
 
   The 30-second PBA budget covers the preparation loop and caps each later
   refinement preparation; `--time-limit` is shared by preparation, IC3,
@@ -103,6 +110,9 @@ rIC3 can be compiled on both Linux and macOS.
   construction with recorded seeds; autonomous CaDiCaL proof selection is
   different from JG's SAT backend and does not promise the same seeds or time.
   The optional real-capture test uses `RIC3_JG_CAPTURE` (see `src/pba/captured.rs`).
+  A paired-export regression compares the normalized CNF, including clause
+  order, against the standalone BTOR frontend (`RIC3_PBA_NORMALIZE_MODEL` and
+  `RIC3_PBA_NORMALIZE_BTOR`, see `src/pba/normalize.rs`).
   PBA supports standalone IC3 without lemma exchange or IC3 local proofs.
   Library callers use `create_bl_engine` or `pba::PbaEngine`, not `IC3::new`.
 

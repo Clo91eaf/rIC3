@@ -9,6 +9,7 @@ mod captured;
 mod encoding;
 mod live;
 mod model;
+mod normalize;
 mod prepare;
 mod proof;
 
@@ -58,6 +59,10 @@ pub struct PbaConfig {
     /// Export each proof selection, concrete projection and abstract model
     #[arg(long = "pba-dump-dir", value_name = "DIR")]
     pub dump: Option<std::path::PathBuf>,
+
+    /// Rebuild the abstraction through word-level simplification and encoding
+    #[arg(long = "pba-normalize", action = clap::ArgAction::Set, default_value_t = true)]
+    pub normalize: bool,
 }
 
 impl Default for PbaConfig {
@@ -68,6 +73,7 @@ impl Default for PbaConfig {
             time_limit: 30,
             refine_limit: 8,
             dump: None,
+            normalize: true,
         }
     }
 }
@@ -229,12 +235,7 @@ fn lift_proof(
     // the concrete model. IC3's certificate includes their violations in bad.
     proof.constraint.clear();
     let mut result = ts.clone();
-    result.merge(&proof, |v| {
-        projection
-            .get(&v)
-            .copied()
-            .or_else(|| (v <= ts.max_var()).then_some(v))
-    });
+    result.merge(&proof, |v| projection.get(&v).copied());
     result.compress_bads();
     BlProof::new(result)
 }
@@ -380,6 +381,31 @@ impl PbaEngine {
             if budget.stopped() {
                 return McResult::Unknown(self.completed_depth);
             }
+            if self.cfg.pba.normalize
+                && let Some(abs) = abstraction.as_mut()
+            {
+                normalize::apply(abs);
+                if let Some(dir) = &self.cfg.pba.dump {
+                    let export = (|| -> std::io::Result<()> {
+                        std::fs::create_dir_all(dir)?;
+                        std::fs::write(
+                            dir.join(format!("ic3-{refinements}.normalized.model.json")),
+                            serde_json::to_vec(&abs.ts)?,
+                        )?;
+                        let mut projection: Vec<_> =
+                            abs.projection.iter().map(|(a, b)| (*a, *b)).collect();
+                        projection.sort_unstable();
+                        std::fs::write(
+                            dir.join(format!("ic3-{refinements}.normalized.projection.json")),
+                            serde_json::to_vec(&projection)?,
+                        )?;
+                        Ok(())
+                    })();
+                    if let Err(error) = export {
+                        warn!("PBA normalization dump failed: {error}");
+                    }
+                }
+            }
             let model = abstraction
                 .as_ref()
                 .map_or_else(|| self.ts.clone(), |a| a.ts.clone());
@@ -418,12 +444,7 @@ impl PbaEngine {
                         return self.accept_counterexample(trace);
                     };
                     info!("PBA replaying abstract counterexample at depth {depth}");
-                    let projected = trace.filter_map_var(|v| {
-                        abs.projection
-                            .get(&v)
-                            .copied()
-                            .or_else(|| (v <= self.ts.max_var()).then_some(v))
-                    });
+                    let projected = trace.filter_map_var(|v| abs.projection.get(&v).copied());
                     match replay(&self.ts, &projected, budget) {
                         Replay::Real(trace) => return self.accept_counterexample(trace),
                         Replay::Spurious if refinements < self.cfg.pba.refine_limit => {

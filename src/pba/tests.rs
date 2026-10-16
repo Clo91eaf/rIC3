@@ -165,7 +165,7 @@ fn property_core_covers_input_choices_beyond_one_spurious_trace() {
 
 #[test]
 fn safe_abstract_proof_is_lifted_and_validated() {
-    for preproc in [false, true] {
+    for (preproc, normalized) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut ts, q, noise) = safe_model();
         // Keep the cut state in the abstract cone to exercise a first-cycle
         // guard and certificate extension with an auxiliary pulse latch.
@@ -174,10 +174,13 @@ fn safe_abstract_proof_is_lifted_and_validated() {
         cfg.preproc.preproc = preproc;
         // Fix the abstraction for this certificate test: a different valid
         // SAT proof may legitimately retain both latches and need no pulse.
-        let abs = model::build(
+        let mut abs = model::build(
             &ts,
             model::complete_selection(&ts, &[q].into_iter().collect()),
         );
+        if normalized {
+            assert!(normalize::apply(&mut abs));
+        }
         assert!(abs.ts.latch.iter().any(|q| !ts.latch.contains(q)));
         let mut engine = PbaEngine::new(cfg, ts.clone(), VarSymbols::new());
         assert_eq!(engine.run_inner(abs.ts, &budget()), McResult::UNSAT);
