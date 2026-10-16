@@ -6,7 +6,7 @@
 	url = https://github.com/gipsyh/giputils.git
 [submodule "deps/cadical-rs"]
 	path = deps/cadical-rs
-	url = https://github.com/gipsyh/cadical-rs.git
+	url = https://github.com/Clo91eaf/cadical-rs.git
 [submodule "deps/kissat-rs"]
 	path = deps/kissat-rs
 	url = https://github.com/gipsyh/kissat-rs.git
