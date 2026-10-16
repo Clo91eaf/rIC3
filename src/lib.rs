@@ -8,6 +8,7 @@ pub mod gipsat;
 pub mod ic3;
 pub mod kind;
 pub mod mp;
+pub mod pba;
 pub mod polynexus;
 pub mod portfolio;
 pub mod rlive;
@@ -185,6 +186,7 @@ pub fn create_bl_engine(
     sym: logicrs::VarSymbols,
 ) -> Box<dyn BlEngine> {
     match cfg {
+        EngineConfig::IC3(cfg) if cfg.pba.enabled => Box::new(pba::PbaEngine::new(cfg, ts, sym)),
         EngineConfig::IC3(cfg) => Box::new(ic3::IC3::new(cfg, ts, sym)),
         EngineConfig::Kind(cfg) => Box::new(kind::Kind::new(cfg, ts)),
         EngineConfig::BMC(cfg) => Box::new(bmc::BMC::new(cfg, ts)),

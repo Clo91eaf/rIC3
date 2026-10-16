@@ -48,6 +48,10 @@ pub struct IC3Config {
     #[command(flatten)]
     pub preproc: PreprocConfig,
 
+    #[command(flatten)]
+    #[serde(default)]
+    pub pba: crate::pba::PbaConfig,
+
     /// dynamic generalization
     #[arg(long = "dynamic", default_value_t = false)]
     pub dynamic: bool,
@@ -130,7 +134,7 @@ impl Default for IC3Config {
 }
 
 impl IC3Config {
-    fn validate(&self) {
+    pub(crate) fn validate(&self) {
         if self.dynamic && self.drop_po {
             error!("cannot enable both dynamic and drop-po");
             panic!();
@@ -260,6 +264,10 @@ impl IC3 {
 impl IC3 {
     pub fn new(cfg: IC3Config, mut ts: Transys, symbols: VarSymbols) -> Self {
         cfg.validate();
+        assert!(
+            !cfg.pba.enabled,
+            "PBA requires PbaEngine or create_bl_engine"
+        );
         let ots = ts.clone();
         if let Some(prop) = cfg.prop {
             if !cfg.local_proof {

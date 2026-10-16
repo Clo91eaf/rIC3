@@ -57,6 +57,42 @@ rIC3 can be compiled on both Linux and macOS.
   - 16-threads Portfolio ```ric3 check <AIGER/BTOR> portfolio```
   - single-thread IC3 ```ric3 check <AIGER/BTOR> ic3```
 
+- Experimental proof-based abstraction for IC3 (off by default):
+
+  ```sh
+  ric3 check model.btor2 ic3 --pba --pba-depth 18 --pba-time-limit 30 --time-limit 300
+  ```
+
+  After parsing/bit-blasting, PBA uses CaDiCaL failed-assumption cores from
+  bounded UNSAT queries at depths 0, 1, 2, 4, 8, 16 and 18 to select state
+  connections. Cut latches become inputs with initial equalities in the
+  abstract cone guarded by a first-cycle pulse. Environment constraints remain
+  in the model. The resulting abstraction goes through the existing COI,
+  CNF/BVE, SCORR and FRTS preprocessing before IC3.
+
+  Abstract counterexamples are replayed on the concrete transition system.
+  Spurious traces restore state connections using a trace core and, when
+  feasible, a property-wide bounded core at the counterexample depth.
+  `--pba-refine-limit` (default 8)
+  caps refinements before falling back to concrete IC3. Abstract SAFE results
+  require a lifted certificate to pass concrete initiation and induction SAT
+  checks. Bounded UNSAT alone never produces a SAFE result. `--cert` and
+  `--cex` refer to the concrete model.
+
+  The 30-second PBA budget covers seed extraction and caps each property-wide
+  refinement query; `--time-limit` is
+  shared by extraction, IC3 restarts, replay and proof validation. A zero PBA
+  budget skips abstraction. CNF growth is capped at two million unrolled
+  variables and eight million estimated clauses; exceeding a cap uses the
+  last seed or falls back to concrete checking. Existing preprocessing may
+  still delay cancellation while constructing an IC3 instance.
+
+  This implementation abstracts flop connections, grouped when they share a
+  next-state variable. It does not reproduce JasperGold's gate-level PBA
+  model. It currently supports the standalone IC3 flow, without lemma
+  exchange or IC3 local proofs. Library callers enable it through
+  `create_bl_engine` or `pba::PbaEngine`, rather than `IC3::new`.
+
 ### Docker
 - build image: ```docker build -t ric3 .```
 - run: ```docker run -v <AIGER/BTOR>:/model.<aig/btor> ric3 check model.<aig/btor> portfolio```

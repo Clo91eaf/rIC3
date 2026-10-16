@@ -1,0 +1,108 @@
+use std::{io::Write, process::Command};
+
+const SAFE: &str = "1 sort bitvec 1
+2 zero 1
+3 state 1 q
+4 state 1 noise
+5 init 1 3 2
+6 init 1 4 2
+7 next 1 3 3
+8 not 1 4
+9 next 1 4 8
+10 and 1 3 4
+11 bad 10
+";
+
+const UNSAFE: &str = "1 sort bitvec 1
+2 zero 1
+3 one 1
+4 state 1 q
+5 state 1 r
+6 init 1 4 2
+7 init 1 5 2
+8 next 1 4 3
+9 next 1 5 4
+10 bad 5
+";
+
+fn run(model: &str, args: &[&str]) -> String {
+    let mut file = tempfile::Builder::new()
+        .suffix(".btor2")
+        .tempfile()
+        .unwrap();
+    file.write_all(model.as_bytes()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ric3"))
+        .arg("check")
+        .arg(file.path())
+        .args(["--ui", "false"])
+        .args(args)
+        .env("RUST_LOG", "info")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+}
+
+#[test]
+fn opt_in_pba_exports_a_safe_certificate() {
+    let dir = tempfile::tempdir().unwrap();
+    let certificate = dir.path().join("proof.btor2");
+    let output = run(
+        SAFE,
+        &[
+            "--cert",
+            certificate.to_str().unwrap(),
+            "ic3",
+            "--pba",
+            "--pba-depth",
+            "1",
+        ],
+    );
+    assert!(output.contains("PBA seed:"), "{output}");
+    assert!(output.contains("lifted invariant passed"), "{output}");
+    assert!(output.ends_with("UNSAT\n"), "{output}");
+    let model = btor::Btor::from_file(&certificate);
+    // Check the serialized certificate as a fresh transition system, without
+    // word-level simplification (which could hide non-inductive invariants).
+    use rIC3::frontend::{Frontend, btor::BtorFrontend};
+    let mut frontend = BtorFrontend::new(model);
+    let (wts, _) = frontend.wts();
+    let (proof, _) = wts.bitblast_to_ts();
+    use logicrs::{LitVec, satif::Satif};
+    use rIC3::transys::{TransysIf, unroll::TransysUnroll};
+    let mut solver = cadical::CaDiCaL::new();
+    proof.load_init(&mut solver);
+    proof.load_trans(&mut solver, true);
+    assert!(!solver.solve_with_constraint(&[], vec![proof.bad.clone()]));
+    let mut unroll = TransysUnroll::new(&proof);
+    unroll.unroll();
+    let mut solver = cadical::CaDiCaL::new();
+    unroll.load_trans(&mut solver, 0, true);
+    unroll.load_trans(&mut solver, 1, true);
+    let assumptions: Vec<_> = proof.bad.iter().map(|b| !*b).collect();
+    let bad: LitVec = unroll.lits_next(&proof.bad, 1).collect();
+    assert!(!solver.solve_with_constraint(&assumptions, vec![bad]));
+}
+
+#[test]
+fn spurious_counterexample_is_not_exported() {
+    let output = run(UNSAFE, &["--cex", "ic3", "--pba", "--pba-depth", "0"]);
+    assert!(output.contains("PBA refinement 1"), "{output}");
+    assert!(output.contains("\nSAT\nsat\nb0\n"), "{output}");
+    assert!(output.contains("counterexample at depth 2"), "{output}");
+    assert!(!output.contains("counterexample at depth 1"), "{output}");
+}
+
+#[test]
+fn pba_is_off_by_default_and_respects_zero_overall_budget() {
+    let output = run(SAFE, &["ic3"]);
+    assert!(!output.contains("PBA"));
+    assert!(output.ends_with("UNSAT\n"));
+    let output = run(UNSAFE, &["--cex", "ic3", "--pba", "--time-limit", "0"]);
+    assert!(output.ends_with("UNKNOWN\n2\n"), "{output}");
+}
