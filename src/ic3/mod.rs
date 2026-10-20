@@ -169,6 +169,10 @@ pub struct IC3Config {
     #[arg(long = "reach-sim", default_value_t = 0)]
     pub reach_sim: usize,
 
+    /// length of each random walk of reach-sim
+    #[arg(long = "reach-sim-len", default_value_t = 32)]
+    pub reach_sim_len: usize,
+
     /// minimum adaptive capacity of the reachable-state cache
     #[arg(long = "reach-cap-min", default_value_t = 40)]
     pub reach_cap_min: usize,

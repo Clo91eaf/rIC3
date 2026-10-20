@@ -126,6 +126,11 @@ impl ReachCache {
         self.capacity
     }
 
+    /// Raises the capacity to hold `n` states (bounded by the maximum capacity).
+    pub fn reserve(&mut self, n: usize) {
+        self.capacity = self.capacity.max(n.min(self.max_cap));
+    }
+
     #[inline]
     fn idx(&self, var: Var) -> Option<usize> {
         let i = *self.latch_idx.get(Into::<usize>::into(var))?;
@@ -463,7 +468,9 @@ impl Reach {
     /// Random walks from the initial states, seeding the cache with
     /// `steps` states.
     fn simulate(&mut self, ic3: &mut IC3, steps: usize) {
-        const WALK_LEN: usize = 32;
+        let walk_len = ic3.cfg.reach_sim_len.max(1);
+        // Seeded states have no hits yet; make room so that they are not evicted at once.
+        self.cache.reserve(steps + steps / 3);
         self.prepare_solvers(ic3);
         let mut done = 0;
         let mut fails = 0;
@@ -495,7 +502,7 @@ impl Reach {
                     self.stat.sim_states += 1;
                 }
                 done += 1;
-                if depth >= WALK_LEN || done >= steps {
+                if depth >= walk_len || done >= steps {
                     break;
                 }
                 let mut assump = cur.clone();
