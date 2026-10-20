@@ -85,7 +85,7 @@ impl IC3 {
                 .check()
             {
                 let core = self.solvers[frame - 1].inductive_core().unwrap();
-                return Some(self.reach_refine_core(frame, core, &cube));
+                return Some(self.reach_refine_core(frame, core, &cube, constraint.is_empty()));
             }
             let mut ret = false;
             let mut cube_new = LitVec::new();
@@ -149,7 +149,7 @@ impl IC3 {
                 .check()
             {
                 let core = self.solvers[frame - 1].inductive_core().unwrap();
-                return Some(self.reach_refine_core(frame, core, &cube));
+                return Some(self.reach_refine_core(frame, core, &cube, true));
             }
             for lit in cube.iter() {
                 if keep.contains(lit) && !self.solvers[frame - 1].sat_value(*lit).is_some_and(|v| v)

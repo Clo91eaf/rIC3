@@ -26,7 +26,7 @@ impl IC3 {
             if self.solvers[i - 1].inductive(&cube, true) {
                 self.statistic.push.success();
                 if let Some(core) = self.solvers[i - 1].inductive_core() {
-                    cube = self.reach_refine_core(i, core, &cube);
+                    cube = self.reach_refine_core(i, core, &cube, true);
                 }
             } else {
                 self.statistic.push.fail();
@@ -43,7 +43,7 @@ impl IC3 {
             self.add_obligation(po.clone());
             return self.add_lemma(po.frame - 1, po.state.as_litvec().clone(), false, Some(po));
         };
-        mic = self.reach_refine_core(po.frame, mic, po.state.as_litvec());
+        mic = self.reach_refine_core(po.frame, mic, po.state.as_litvec(), true);
         let original_cube_size = mic.len();
         mic = self.mic(po.frame, mic, &[], mic_type);
         let generalized_cube_size = mic.len();
@@ -219,7 +219,7 @@ impl IC3 {
                 .check()
             {
                 let mut mic = self.solvers[frame - 1].inductive_core().unwrap();
-                mic = self.reach_refine_core(frame, mic, lemma.as_litvec());
+                mic = self.reach_refine_core(frame, mic, lemma.as_litvec(), constraint.is_empty());
                 mic = self.mic(frame, mic, constraint, MicType::DropVar(parameter));
                 let (frame, mic) = self.push_lemma(frame, mic);
                 self.add_lemma(frame - 1, mic, false, None);

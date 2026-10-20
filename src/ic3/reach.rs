@@ -423,45 +423,56 @@ impl Reach {
         }
     }
 
+    /// Whether `s` assigns every latch.
+    #[inline]
+    fn total(&self, s: &LitVec) -> bool {
+        s.len() == self.latches.len()
+    }
+
     /// Computes concrete reachable states along `chain`. `chain[0]` contains
     /// either `start` (a cached reachable state of depth `start_depth`) or,
     /// if `start` is `None`, an initial state. Every consecutive pair of cubes
     /// is connected by a transition from every state of the first (as
     /// guaranteed by predecessor lifting), so successor queries succeed.
+    ///
+    /// Every query is made from a *total* current state and only total
+    /// successor states are kept: a partial assignment is not a state, and
+    /// completing it arbitrarily may leave the reachable states.
     fn witness(&mut self, ic3: &IC3, chain: &[LitOrdVec], start: Option<(LitVec, usize)>) {
         self.prepare_solvers(ic3);
-        let (mut cur, mut depth, mut k) = match start {
-            Some((s, d)) => (s, d, 1),
+        let (mut cur, mut depth) = match start {
+            Some((s, d)) => (s, d),
             None => {
                 let mut assump: LitVec = chain[0].as_litvec().clone();
                 if chain.len() > 1 {
                     assump.extend(ic3.tsctx.lits_next(chain[1].iter()));
                 }
                 self.stat.witness_queries += 1;
-                let Some((s0, s1)) = self.successor(ic3, true, &assump) else {
+                let Some((s0, _)) = self.successor(ic3, true, &assump) else {
                     self.stat.witness_fail += 1;
                     return;
                 };
-                if chain.len() > 1 {
-                    self.insert(&s1, 1);
-                    (s1, 1, 2)
-                } else {
-                    (s0, 0, 1)
-                }
+                (s0, 0)
             }
         };
-        while k < chain.len() {
+        if !self.total(&cur) {
+            self.stat.witness_fail += 1;
+            return;
+        }
+        for cube in chain[1..].iter() {
             let mut assump = cur.clone();
-            assump.extend(ic3.tsctx.lits_next(chain[k].iter()));
+            assump.extend(ic3.tsctx.lits_next(cube.iter()));
             self.stat.witness_queries += 1;
-            let Some((_, next)) = self.successor(ic3, false, &assump) else {
-                self.stat.witness_fail += 1;
-                return;
+            let next = match self.successor(ic3, false, &assump) {
+                Some((_, next)) if self.total(&next) => next,
+                _ => {
+                    self.stat.witness_fail += 1;
+                    return;
+                }
             };
             cur = next;
             depth += 1;
             self.insert(&cur, depth);
-            k += 1;
         }
     }
 
@@ -472,51 +483,54 @@ impl Reach {
         // Seeded states have no hits yet; make room so that they are not evicted at once.
         self.cache.reserve(steps + steps / 3);
         self.prepare_solvers(ic3);
+        let rnd = |ic3: &mut IC3, vars: &[Var]| -> LitVec {
+            vars.iter()
+                .map(|v| v.lit().not_if(ic3.rng.random_bool(0.5)))
+                .collect()
+        };
+        let free_latches: Vec<Var> = self
+            .latches
+            .iter()
+            .filter(|l| ic3.tsctx.init_map[**l].is_none())
+            .copied()
+            .collect();
+        let inputs = ic3.tsctx.input.clone();
         let mut done = 0;
         let mut fails = 0;
         while done < steps && fails < 16 {
-            let rnd = |ic3: &mut IC3, vars: &mut dyn Iterator<Item = Var>| -> LitVec {
-                vars.map(|v| v.lit().not_if(ic3.rng.random_bool(0.5)))
-                    .collect()
-            };
-            let free_latches: Vec<Var> = self
-                .latches
-                .iter()
-                .filter(|l| ic3.tsctx.init_map[**l].is_none())
-                .copied()
-                .collect();
-            let inputs = ic3.tsctx.input.clone();
-            let mut assump = rnd(ic3, &mut free_latches.iter().copied());
-            assump.extend(rnd(ic3, &mut inputs.iter().copied()));
+            let assump = rnd(ic3, &free_latches);
             self.stat.sim_queries += 1;
             let first = self
                 .successor(ic3, true, &assump)
                 .or_else(|| self.successor(ic3, true, &[]));
-            let Some((_, mut cur)) = first else {
-                fails += 1;
-                continue;
+            let mut cur = match first {
+                Some((s0, _)) if self.total(&s0) => s0,
+                _ => {
+                    fails += 1;
+                    continue;
+                }
             };
-            let mut depth = 1;
-            loop {
-                if self.cache.insert(&cur, depth) {
-                    self.stat.sim_states += 1;
-                }
-                done += 1;
-                if depth >= walk_len || done >= steps {
-                    break;
-                }
+            for depth in 1..=walk_len {
                 let mut assump = cur.clone();
-                assump.extend(rnd(ic3, &mut inputs.iter().copied()));
+                assump.extend(rnd(ic3, &inputs));
                 self.stat.sim_queries += 1;
                 let next = self
                     .successor(ic3, false, &assump)
                     .or_else(|| self.successor(ic3, false, &cur));
-                let Some((_, next)) = next else {
-                    fails += 1;
-                    break;
+                cur = match next {
+                    Some((_, next)) if self.total(&next) => next,
+                    _ => {
+                        fails += 1;
+                        break;
+                    }
                 };
-                cur = next;
-                depth += 1;
+                if self.cache.insert(&cur, depth) {
+                    self.stat.sim_states += 1;
+                }
+                done += 1;
+                if done >= steps {
+                    break;
+                }
             }
         }
     }
@@ -603,11 +617,15 @@ impl IC3 {
     /// at `frame`; every cube between `core` and `cube` is relatively
     /// inductive as well. Re-adds literals of `cube` to `core` until it
     /// contains no known reachable state (if `cube` itself contains none).
+    /// `plain` tells whether the check was relative to the plain frame (no
+    /// extra constraint, as CTG blocking under `!full` uses); only then is a
+    /// core containing a state of depth <= frame impossible.
     pub(super) fn reach_refine_core(
         &mut self,
         frame: usize,
         mut core: LitVec,
         cube: &[Lit],
+        plain: bool,
     ) -> LitVec {
         if !self.cfg.reach_mic {
             return core;
@@ -617,7 +635,7 @@ impl IC3 {
             return core;
         };
         while let Some(id) = reach.cache.find(&core, depth) {
-            if reach.cache.depth(id) <= frame {
+            if plain && reach.cache.depth(id) <= frame {
                 reach.stat.exact_violation += 1;
             }
             let Some(l) = cube
@@ -769,7 +787,7 @@ impl IC3 {
                 self.add_may(po);
                 return self.add_lemma(frame, lemma, false, None);
             };
-            let core = self.reach_refine_core(po.frame, core, po.state.as_litvec());
+            let core = self.reach_refine_core(po.frame, core, po.state.as_litvec(), true);
             let mic = self.mic(
                 po.frame,
                 core,

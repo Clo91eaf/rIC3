@@ -31,7 +31,8 @@ impl IC3 {
                         let core = self.solvers[frame_idx]
                             .inductive_core()
                             .unwrap_or(lemma.as_litvec().clone());
-                        let core = self.reach_refine_core(frame_idx + 1, core, lemma.as_litvec());
+                        let core =
+                            self.reach_refine_core(frame_idx + 1, core, lemma.as_litvec(), true);
                         if let Some(po) = &mut lemma.po
                             && po.frame < frame_idx + 2
                             && self.obligations.remove(po)
