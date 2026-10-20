@@ -160,6 +160,11 @@ pub struct IC3Config {
     #[arg(long = "may-po-min-shrink", default_value_t = 2)]
     pub may_po_min_shrink: usize,
 
+    /// generalize (MIC) lemmas learned from blocked may obligations; if false only
+    /// their inductive core is used
+    #[arg(long = "may-po-mic", action = ArgAction::Set, default_value_t = true)]
+    pub may_po_mic: bool,
+
     /// seed the reachable-state cache with this many states from random walks
     #[arg(long = "reach-sim", default_value_t = 0)]
     pub reach_sim: usize,

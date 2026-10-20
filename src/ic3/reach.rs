@@ -767,7 +767,11 @@ impl IC3 {
                 po.frame,
                 core,
                 &[],
-                super::mic::MicType::from_config(&self.cfg),
+                if self.cfg.may_po_mic {
+                    super::mic::MicType::from_config(&self.cfg)
+                } else {
+                    super::mic::MicType::NoMic
+                },
             );
             let (frame, mic) = self.push_lemma(po.frame, mic);
             po.push_to(frame);

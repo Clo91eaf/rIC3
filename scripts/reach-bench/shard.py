@@ -18,6 +18,7 @@ ap.add_argument("--jobs", type=int, default=4)
 ap.add_argument("--time-limit", type=float, default=300)
 ap.add_argument("--memory-mb", type=int, default=6144)
 ap.add_argument("--solvers", nargs="+")
+ap.add_argument("--seed", type=int)
 a = ap.parse_args()
 cases = [c.strip() for c in Path(a.cases).read_text().splitlines() if c.strip()]
 out = Path(a.outdir).resolve()
@@ -30,6 +31,8 @@ for j in range(a.jobs):
     cmd = [sys.executable, str(BENCH / "script/run.py"), "--config", str(Path(a.config).resolve()),
            "--pattern", ",".join(mine), "--time-limit", str(a.time_limit),
            "--memory-mb", str(a.memory_mb), "--output", str(out / f"shard{j}")]
+    if a.seed is not None:
+        cmd += ["--seed", str(a.seed)]
     if a.solvers:
         cmd += ["--solvers", *a.solvers]
     log = open(out / f"shard{j}.log", "w")
