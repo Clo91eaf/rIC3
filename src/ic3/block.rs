@@ -17,12 +17,19 @@ pub enum BlockResult {
 }
 
 impl IC3 {
-    fn push_lemma(&mut self, frame: usize, mut cube: LitVec) -> (usize, LitVec) {
+    pub(super) fn push_lemma(&mut self, frame: usize, mut cube: LitVec) -> (usize, LitVec) {
         let start = Instant::now();
         for i in frame + 1..=self.level() {
+            if self.reach_push_blocked(i, &cube) {
+                return (i, cube);
+            }
             if self.solvers[i - 1].inductive(&cube, true) {
-                cube = self.solvers[i - 1].inductive_core().unwrap_or(cube);
+                self.statistic.push.success();
+                if let Some(core) = self.solvers[i - 1].inductive_core() {
+                    cube = self.reach_refine_core(i, core, &cube);
+                }
             } else {
+                self.statistic.push.fail();
                 return (i, cube);
             }
         }
@@ -36,6 +43,7 @@ impl IC3 {
             self.add_obligation(po.clone());
             return self.add_lemma(po.frame - 1, po.state.as_litvec().clone(), false, Some(po));
         };
+        mic = self.reach_refine_core(po.frame, mic, po.state.as_litvec());
         let original_cube_size = mic.len();
         mic = self.mic(po.frame, mic, &[], mic_type);
         let generalized_cube_size = mic.len();
@@ -44,6 +52,7 @@ impl IC3 {
             self.mab_feedback(&po, original_cube_size, generalized_cube_size, frame);
         }
         self.statistic.avg_po_cube_len += po.state.len();
+        self.may_create(po.state.len(), frame, &mic);
         po.push_to(frame);
         self.add_obligation(po.clone());
         if self.add_lemma(frame - 1, mic.clone(), false, Some(po)) {
@@ -81,6 +90,12 @@ impl IC3 {
             // Checked before popping so an empty queue still observes an interrupt.
             if self.is_interrupted() {
                 return BlockResult::OverallTimeLimitExceeded;
+            }
+            if self.may_turn() {
+                if self.may_step() {
+                    return BlockResult::Proved;
+                }
+                continue;
             }
             let Some(mut po) = self.obligations.pop(self.level()) else {
                 return BlockResult::Success;
@@ -128,6 +143,7 @@ impl IC3 {
                 .with_act_order(false)
                 .check();
             self.statistic.block.blocked_time += blocked_start.elapsed();
+            self.may_earn();
             if blocked {
                 noc += 1;
                 let mic_type = if self.cfg.mab {
@@ -203,6 +219,7 @@ impl IC3 {
                 .check()
             {
                 let mut mic = self.solvers[frame - 1].inductive_core().unwrap();
+                mic = self.reach_refine_core(frame, mic, lemma.as_litvec());
                 mic = self.mic(frame, mic, constraint, MicType::DropVar(parameter));
                 let (frame, mic) = self.push_lemma(frame, mic);
                 self.add_lemma(frame - 1, mic, false, None);

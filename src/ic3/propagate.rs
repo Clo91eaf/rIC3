@@ -19,14 +19,19 @@ impl IC3 {
                     continue;
                 }
                 for ctp in 0..3 {
+                    if self.reach_push_blocked(frame_idx + 1, lemma.as_litvec()) {
+                        break;
+                    }
                     if self
                         .blocked(frame_idx + 1, &lemma)
                         .with_act_order(false)
                         .check()
                     {
+                        self.statistic.propagate_push.success();
                         let core = self.solvers[frame_idx]
                             .inductive_core()
                             .unwrap_or(lemma.as_litvec().clone());
+                        let core = self.reach_refine_core(frame_idx + 1, core, lemma.as_litvec());
                         if let Some(po) = &mut lemma.po
                             && po.frame < frame_idx + 2
                             && self.obligations.remove(po)
@@ -38,6 +43,7 @@ impl IC3 {
                         self.statistic.ctp.statistic(ctp > 0);
                         break;
                     }
+                    self.statistic.propagate_push.fail();
                     if !self.cfg.ctp {
                         break;
                     }
@@ -71,6 +77,9 @@ impl IC3 {
         };
         let mut lemma = lastf.swap_remove(lidx);
         loop {
+            if self.reach_inf_push_blocked(lemma.as_litvec()) {
+                return false;
+            }
             if self.inf_solver.inductive(&lemma, true) {
                 if let Some(po) = &mut lemma.po {
                     self.obligations.remove(po);
@@ -97,6 +106,9 @@ impl IC3 {
         lastf.shuffle(&mut self.rng);
         while let Some(mut lemma) = lastf.pop() {
             loop {
+                if self.reach_inf_push_blocked(lemma.as_litvec()) {
+                    break;
+                }
                 if self.inf_solver.inductive(&lemma, true) {
                     if let Some(po) = &mut lemma.po {
                         self.obligations.remove(po);

@@ -33,6 +33,7 @@ mod mic;
 mod predprop;
 mod proofoblig;
 mod propagate;
+mod reach;
 mod solver;
 mod ui;
 mod utils;
@@ -118,6 +119,58 @@ pub struct IC3Config {
     /// Local proof (internal parameter)
     #[arg(skip)]
     pub local_proof: bool,
+
+    /// reachable-state guided generalization (QUIP-style, FMCAD'15 "Pushing to the Top"):
+    /// keeps a cache of concrete reachable states; turns on reach-mic, reach-push and may-po
+    /// unless they are set explicitly
+    #[arg(long = "reach-cache", default_value_t = false)]
+    pub reach_cache: bool,
+
+    /// reject MIC candidates (and refine cores) that contain a cached reachable state
+    #[arg(
+        long = "reach-mic", action = ArgAction::Set, default_value_t = false,
+        default_value_if("reach_cache", "true", "true"),
+    )]
+    pub reach_mic: bool,
+
+    /// in reach-mic, only use cached states reachable within the lemma's frame
+    /// (exact: only saves SAT calls, never changes a MIC result)
+    #[arg(long = "reach-mic-exact", action = ArgAction::Set, default_value_t = false)]
+    pub reach_mic_exact: bool,
+
+    /// skip push attempts known to fail because of a cached reachable state
+    #[arg(
+        long = "reach-push", action = ArgAction::Set, default_value_t = false,
+        default_value_if("reach_cache", "true", "true"),
+    )]
+    pub reach_push: bool,
+
+    /// may-proof obligations for generalized lemmas; reachable ones fill the state cache
+    #[arg(
+        long = "may-po", action = ArgAction::Set, default_value_t = false,
+        default_value_if("reach_cache", "true", "true"),
+    )]
+    pub may_po: bool,
+
+    /// may obligations processed per ordinary obligation
+    #[arg(long = "may-po-share", default_value_t = 0.2)]
+    pub may_po_share: f64,
+
+    /// create a may obligation when generalization drops at least this many literals
+    #[arg(long = "may-po-min-shrink", default_value_t = 2)]
+    pub may_po_min_shrink: usize,
+
+    /// seed the reachable-state cache with this many states from random walks
+    #[arg(long = "reach-sim", default_value_t = 0)]
+    pub reach_sim: usize,
+
+    /// minimum adaptive capacity of the reachable-state cache
+    #[arg(long = "reach-cap-min", default_value_t = 40)]
+    pub reach_cap_min: usize,
+
+    /// maximum adaptive capacity of the reachable-state cache
+    #[arg(long = "reach-cap-max", default_value_t = 1000)]
+    pub reach_cap_max: usize,
 }
 
 impl_config_deref!(IC3Config);
@@ -130,7 +183,20 @@ impl Default for IC3Config {
 }
 
 impl IC3Config {
+    #[inline]
+    pub fn reach_enabled(&self) -> bool {
+        self.reach_mic || self.reach_push || self.may_po || self.reach_sim > 0
+    }
+
     fn validate(&self) {
+        if self.reach_enabled()
+            && (self.inn || self.abs_cst || self.abs_trans || self.pred_prop || self.local_proof)
+        {
+            error!(
+                "reachable-state cache cannot be used with inn, abs-cst, abs-trans or pred-prop"
+            );
+            panic!();
+        }
         if self.dynamic && self.drop_po {
             error!("cannot enable both dynamic and drop-po");
             panic!();
@@ -179,6 +245,8 @@ pub struct IC3 {
     lift: TsLift,
     frame: Frames,
     obligations: ProofObligationQueue,
+    may_obligations: ProofObligationQueue,
+    reach: Option<reach::Reach>,
     activity: Activity,
     statistic: Statistic,
     localabs: LocalAbs,
@@ -253,6 +321,7 @@ impl IC3 {
                 self.ts.add_init(i.var(), Lit::constant(i.polarity()));
                 self.tsctx.add_init(i.var(), Lit::constant(i.polarity()));
             }
+            self.reach_init();
         }
     }
 }
@@ -309,6 +378,8 @@ impl IC3 {
             ts_top_lv,
             statistic,
             obligations: ProofObligationQueue::new(),
+            may_obligations: ProofObligationQueue::new(),
+            reach: None,
             frame,
             localabs,
             auxiliary_var: Vec::new(),
@@ -419,6 +490,10 @@ impl Engine for IC3 {
             info!("{}", self.mab.statistic());
         }
         info!("obligations: {}", self.obligations.statistic());
+        if let Some(reach) = self.reach_statistic() {
+            info!("may obligations: {}", self.may_obligations.statistic());
+            info!("{reach}");
+        }
         info!("{}", self.frame.statistic(false));
         let statistic = self
             .solvers

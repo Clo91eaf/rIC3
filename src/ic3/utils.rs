@@ -33,6 +33,11 @@ pub struct Statistic {
 
     pub ctp: SuccessRate,
 
+    /// Push attempts of freshly generalized lemmas.
+    pub push: SuccessRate,
+    /// Push attempts in the propagation phase.
+    pub propagate_push: SuccessRate,
+
     pub block: Block,
 
     pub propagate: Propagate,

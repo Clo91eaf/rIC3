@@ -16,6 +16,9 @@ pub struct ProofObligationInner {
     pub next: Option<ProofObligation>,
     pub removed: bool,
     pub act: f64,
+    /// Root id of a may-proof obligation (`None` for ordinary obligations).
+    /// Not part of the ordering.
+    pub may_root: Option<u32>,
 }
 
 impl PartialEq for ProofObligationInner {
@@ -86,6 +89,7 @@ impl ProofObligation {
                 next,
                 removed: false,
                 act: 0.0,
+                may_root: None,
             }),
         }
     }
@@ -175,6 +179,33 @@ impl ProofObligationQueue {
         } else {
             None
         }
+    }
+
+    /// Like [`Self::add`], but ignores an obligation that is already queued.
+    pub fn add_if_absent(&mut self, po: ProofObligation) -> bool {
+        if self.obligations.contains(&po) {
+            return false;
+        }
+        self.add(po);
+        true
+    }
+
+    /// Whether an obligation at frame `depth` or below is queued.
+    #[inline]
+    pub fn ready(&self, depth: usize) -> bool {
+        self.obligations.last().is_some_and(|po| po.frame <= depth)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.obligations.len()
+    }
+
+    /// Drops the lowest-priority obligation (the one at the highest frame).
+    pub fn pop_lowest(&mut self) -> Option<ProofObligation> {
+        let po = self.obligations.pop_first()?;
+        self.num[po.frame] -= 1;
+        Some(po)
     }
 
     pub fn peak(&mut self) -> Option<ProofObligation> {

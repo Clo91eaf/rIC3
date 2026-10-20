@@ -73,6 +73,9 @@ impl IC3 {
             {
                 return None;
             }
+            if self.reach_mic_reject(frame, &cube) {
+                return None;
+            }
             self.statistic.num_down_sat += 1;
             if self
                 .blocked(frame, &cube)
@@ -81,7 +84,8 @@ impl IC3 {
                 .with_constraint(constraint)
                 .check()
             {
-                return Some(self.solvers[frame - 1].inductive_core().unwrap());
+                let core = self.solvers[frame - 1].inductive_core().unwrap();
+                return Some(self.reach_refine_core(frame, core, &cube));
             }
             let mut ret = false;
             let mut cube_new = LitVec::new();
@@ -134,6 +138,9 @@ impl IC3 {
             if self.tsctx.cube_subsume_init(&cube) {
                 return None;
             }
+            if self.reach_mic_reject(frame, &cube) {
+                return None;
+            }
             self.statistic.num_down_sat += 1;
             if self
                 .blocked(frame, &cube)
@@ -141,7 +148,8 @@ impl IC3 {
                 .with_strengthen()
                 .check()
             {
-                return Some(self.solvers[frame - 1].inductive_core().unwrap());
+                let core = self.solvers[frame - 1].inductive_core().unwrap();
+                return Some(self.reach_refine_core(frame, core, &cube));
             }
             for lit in cube.iter() {
                 if keep.contains(lit) && !self.solvers[frame - 1].sat_value(*lit).is_some_and(|v| v)
