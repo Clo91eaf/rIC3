@@ -234,12 +234,12 @@ random values contradict the constraints, the query is retried without them.
   2. The first input line of a counterexample trace contains only the inputs
      that were assigned.
 
-  A validation build with both fixes (`scripts/reach-bench/cert-fixes/`)
-  passes certifaiger on every UNSAT certificate it produced with
-  `--reach-cache` (15/15 on the sanity sample). Unsafe traces from that
-  sample also validate, except for one case where the frontend's input list
-  is shorter than the model's (779 vs 397 inputs). That defect is in the
-  existing frontend and affects `base` equally.
+  A validation build with both fixes passes certifaiger on every certificate
+  that `R` produced for the cases it solves in under 60 s (stage-2 set plus
+  extension): 33/33 UNSAT witness circuits and 16/16 SAT traces. The trace fix
+  in `scripts/reach-bench/cert-fixes/rIC3-frontend.patch` writes lines over
+  the original AIGER inputs and latches. Before it, 9 of the 16 traces were
+  rejected for lines that were too short, `base` included.
 
 ## 5. A bug found during the evaluation: partial witness states
 
