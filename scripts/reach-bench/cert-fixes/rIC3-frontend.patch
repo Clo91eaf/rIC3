@@ -1,9 +1,66 @@
 diff --git a/src/frontend/aig/mod.rs b/src/frontend/aig/mod.rs
-index 819995d..37c3398 100644
+index 819995d..855c04b 100644
 --- a/src/frontend/aig/mod.rs
 +++ b/src/frontend/aig/mod.rs
-@@ -258,12 +258,7 @@ impl Frontend for AigFrontend {
-                     line.push(if l.polarity() { '1' } else { '0' })
+@@ -9,7 +9,7 @@ use giputils::{
+     hash::{GHashMap, GHashSet},
+ };
+ use log::{debug, error, warn};
+-use logicrs::{Lbool, Lit, LitVec, Var, VarSymbols};
++use logicrs::{Lit, LitVec, Var, VarSymbols};
+ use std::{fmt::Display, path::Path, process::Command};
+ 
+ impl From<&Transys> for Aig {
+@@ -146,6 +146,8 @@ pub struct AigFrontend {
+     ts: Transys,
+     ts_symbols: VarSymbols,
+     original_vars: Vec<Var>,
++    orig_inputs: Vec<Var>,
++    orig_latches: Vec<(Var, Option<Lit>)>,
+ }
+ 
+ impl AigFrontend {
+@@ -177,6 +179,8 @@ impl AigFrontend {
+             aig.fairness.clear();
+         }
+         aig.comb_simplify();
++        let orig_inputs = aig.inputs.clone();
++        let orig_latches = aig.latchs.iter().map(|l| (l.input, l.init)).collect();
+         let (aig, coi_map) = aig.coi_simplify();
+         let (ts, map) = Transys::from_aig_compact(&aig);
+         let ts_symbols = VarSymbols::new();
+@@ -193,6 +197,8 @@ impl AigFrontend {
+             ts,
+             ts_symbols,
+             original_vars,
++            orig_inputs,
++            orig_latches,
+         }
+     }
+ 
+@@ -251,28 +257,33 @@ impl Frontend for AigFrontend {
+                 } else {
+                     res.push("j0".to_string());
+                 }
++                // Emit full-width lines over the inputs and latches of the
++                // original AIGER model; signals removed by simplification
++                // take their reset value (latches) or 0.
++                let orig = |v: Var| self.original_vars.get(usize::from(v)).copied();
++                let state: GHashMap<Var, bool> = cex.state[0]
++                    .iter()
++                    .filter_map(|l| orig(l.var()).map(|o| (o, l.polarity())))
++                    .collect();
+                 let mut line = String::new();
+-                let mut lbstate = Vec::new();
+-                for l in cex.state[0].iter() {
+-                    lbstate.push(Lbool::from(l.polarity()));
+-                    line.push(if l.polarity() { '1' } else { '0' })
++                for (v, init) in self.orig_latches.iter() {
++                    let r = match state.get(v) {
++                        Some(r) => *r,
++                        None => init.and_then(|i| i.try_constant()).unwrap_or(false),
++                    };
++                    line.push(if r { '1' } else { '0' });
                  }
                  res.push(line);
 -                let mut line = String::new();
@@ -12,7 +69,25 @@ index 819995d..37c3398 100644
 -                }
 -                res.push(line);
 -                for c in cex.input[1..].iter() {
+-                    let map: GHashMap<Var, bool> =
+-                        GHashMap::from_iter(c.iter().map(|l| (l.var(), l.polarity())));
+-                    let mut line = String::new();
+-                    let mut input = Vec::new();
+-                    for l in self.ts.input.iter() {
+-                        let r = if let Some(r) = map.get(l) { *r } else { true };
+-                        line.push(if r { '1' } else { '0' });
+-                        input.push(Lbool::from(r));
+-                    }
 +                for c in cex.input.iter() {
-                     let map: GHashMap<Var, bool> =
-                         GHashMap::from_iter(c.iter().map(|l| (l.var(), l.polarity())));
-                     let mut line = String::new();
++                    let map: GHashMap<Var, bool> = c
++                        .iter()
++                        .filter_map(|l| orig(l.var()).map(|o| (o, l.polarity())))
++                        .collect();
++                    let line: String = self
++                        .orig_inputs
++                        .iter()
++                        .map(|v| if map.get(v).copied().unwrap_or(false) { '1' } else { '0' })
++                        .collect();
+                     res.push(line);
+                 }
+                 res.push(".\n".to_string());
