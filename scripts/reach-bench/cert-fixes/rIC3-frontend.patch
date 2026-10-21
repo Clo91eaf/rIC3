@@ -1,0 +1,18 @@
+diff --git a/src/frontend/aig/mod.rs b/src/frontend/aig/mod.rs
+index 819995d..37c3398 100644
+--- a/src/frontend/aig/mod.rs
++++ b/src/frontend/aig/mod.rs
+@@ -258,12 +258,7 @@ impl Frontend for AigFrontend {
+                     line.push(if l.polarity() { '1' } else { '0' })
+                 }
+                 res.push(line);
+-                let mut line = String::new();
+-                for i in cex.input[0].iter() {
+-                    line.push(if i.polarity() { '1' } else { '0' })
+-                }
+-                res.push(line);
+-                for c in cex.input[1..].iter() {
++                for c in cex.input.iter() {
+                     let map: GHashMap<Var, bool> =
+                         GHashMap::from_iter(c.iter().map(|l| (l.var(), l.polarity())));
+                     let mut line = String::new();

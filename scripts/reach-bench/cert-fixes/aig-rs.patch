@@ -1,0 +1,12 @@
+diff --git a/src/others.rs b/src/others.rs
+index bbb7e04..504f8fd 100644
+--- a/src/others.rs
++++ b/src/others.rs
+@@ -135,6 +135,7 @@ impl Aig {
+         let mut res = Self::new();
+         let mut encode_map = Gvec::new();
+         encode_map.reserve(self.nodes.len());
++        encode_map[0usize] = Var::CONST;
+         let mut max_id = 0;
+         for &l in self.inputs.iter() {
+             max_id += 1;
