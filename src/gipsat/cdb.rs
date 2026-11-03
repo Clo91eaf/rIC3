@@ -256,6 +256,9 @@ pub struct ClauseDB {
     pub learnt: Gvec<CRef>,
     pub temporary: Gvec<CRef>,
     act_inc: f32,
+    /// Learnt clauses kept before a reduction: starts at the number of
+    /// transition clauses (at least 2000) and grows by 10% per reduction.
+    pub learnt_cap: f64,
 }
 
 impl ClauseDB {
@@ -331,6 +334,7 @@ impl Default for ClauseDB {
             learnt: Default::default(),
             temporary: Default::default(),
             act_inc: 1.0,
+            learnt_cap: 0.0,
         }
     }
 }
@@ -365,9 +369,15 @@ impl DagCnfSolver {
     }
 
     pub fn clean_learnt(&mut self, full: bool) {
-        if (full && self.cdb.learnt.len() * 15 > self.cdb.trans.len())
-            || self.cdb.learnt.len() > self.cdb.trans.len()
-        {
+        // The budget used to be the number of transition clauses, fixed, so a
+        // smaller CNF (after BVE or gate encoding) kept fewer learnt clauses
+        // and hard queries kept losing them.
+        if self.cdb.learnt_cap == 0.0 {
+            self.cdb.learnt_cap = self.cdb.trans.len().max(2000) as f64;
+        }
+        let cap = self.cdb.learnt_cap as usize;
+        if (full && self.cdb.learnt.len() * 15 > cap) || self.cdb.learnt.len() > cap {
+            self.cdb.learnt_cap *= 1.1;
             let onum_learnt = self.cdb.num_learnt();
             self.cdb.learnt.sort_unstable_by(|a, b| {
                 self.cdb
