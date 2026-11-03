@@ -136,7 +136,7 @@ impl IC3 {
                 self.statistic.propagate.push_inf_time += start.elapsed();
                 return;
             }
-            let mut slv = TransysSolver::new(&self.tsctx);
+            let mut slv = TransysSolver::new_with(&self.tsctx, self.cfg.sat.clone());
             for i in self.frame.inf.iter() {
                 slv.add_clause(&!i.as_litvec());
             }

@@ -282,7 +282,13 @@ impl Frontend for AigFrontend {
                     let line: String = self
                         .orig_inputs
                         .iter()
-                        .map(|v| if map.get(v).copied().unwrap_or(false) { '1' } else { '0' })
+                        .map(|v| {
+                            if map.get(v).copied().unwrap_or(false) {
+                                '1'
+                            } else {
+                                '0'
+                            }
+                        })
                         .collect();
                     res.push(line);
                 }

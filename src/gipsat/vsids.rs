@@ -155,11 +155,9 @@ impl Activity {
         }
     }
 
-    const DECAY: f64 = 0.95;
-
     #[inline]
-    pub fn decay(&mut self) {
-        self.act_inc *= 1.0 / Self::DECAY
+    pub fn decay(&mut self, decay: f64) {
+        self.act_inc *= 1.0 / decay
     }
 
     #[allow(unused)]
@@ -229,8 +227,8 @@ impl Vsids {
     }
 
     #[inline]
-    pub fn decay(&mut self) {
-        self.activity.decay();
+    pub fn decay(&mut self, decay: f64) {
+        self.activity.decay(decay);
     }
 }
 

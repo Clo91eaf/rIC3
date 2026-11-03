@@ -62,14 +62,60 @@ pub struct DagCnfSolver {
     statistic: SolverStatistic,
 }
 
-#[derive(Debug, Clone)]
+/// Tunable heuristics of gipsat. The defaults are the original constants.
+#[derive(clap::Args, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
+    /// gipsat: phase saving
+    #[arg(long = "sat-phase-saving", action = clap::ArgAction::Set, default_value_t = true)]
     pub phase_saving: bool,
+
+    /// gipsat: learnt clauses kept before a reduction is at least this many
+    /// (the budget is max(transition clauses, this))
+    #[arg(long = "sat-learnt-min", default_value_t = 0)]
+    pub learnt_min: usize,
+
+    /// gipsat: the learnt-clause budget is multiplied by this after each reduction
+    #[arg(long = "sat-learnt-grow", default_value_t = 1.0)]
+    pub learnt_grow: f64,
+
+    /// gipsat: fraction of learnt clauses (most active first) kept by a reduction
+    #[arg(long = "sat-learnt-keep", default_value_t = 1.0 / 3.0)]
+    pub learnt_keep: f64,
+
+    /// gipsat: conflicts per restart are this times the Luby sequence
+    #[arg(long = "sat-restart-base", default_value_t = 100.0)]
+    pub restart_base: f64,
+
+    /// gipsat: restarts decided by activity buckets before switching to the VSIDS heap
+    #[arg(long = "sat-bucket-restarts", default_value_t = 10)]
+    pub bucket_restarts: u32,
+
+    /// gipsat: variable activity decay
+    #[arg(long = "sat-var-decay", default_value_t = 0.95)]
+    pub var_decay: f64,
+
+    /// gipsat: learnt clause activity decay
+    #[arg(long = "sat-cls-decay", default_value_t = 0.99)]
+    pub cls_decay: f32,
+
+    /// gipsat: decide and propagate only in the cone of the assumptions
+    #[arg(long = "sat-domain", action = clap::ArgAction::Set, default_value_t = true)]
+    pub domain: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { phase_saving: true }
+        Self {
+            phase_saving: true,
+            learnt_min: 0,
+            learnt_grow: 1.0,
+            learnt_keep: 1.0 / 3.0,
+            restart_base: 100.0,
+            bucket_restarts: 10,
+            var_decay: 0.95,
+            cls_decay: 0.99,
+            domain: true,
+        }
     }
 }
 
@@ -191,7 +237,12 @@ impl DagCnfSolver {
         }
 
         if !self.temporary_domain {
-            self.domain.enable_local(domain, &self.dc, &self.value);
+            if self.cfg.domain {
+                self.domain.enable_local(domain, &self.dc, &self.value);
+            } else {
+                let all = logicrs::VarRange::new_inclusive(Var::new(1), self.dc.max_var());
+                self.domain.enable_local(all, &self.dc, &self.value);
+            }
             assert!(!self.domain.has(self.constrain_act));
             self.domain.insert(self.constrain_act);
             if bucket {

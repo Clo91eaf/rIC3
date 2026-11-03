@@ -48,6 +48,9 @@ pub struct IC3Config {
     #[command(flatten)]
     pub preproc: PreprocConfig,
 
+    #[command(flatten)]
+    pub sat: crate::gipsat::Config,
+
     /// dynamic generalization
     #[arg(long = "dynamic", default_value_t = false)]
     pub dynamic: bool,
@@ -293,7 +296,7 @@ impl IC3 {
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
         let frame = Frames::new(&tsctx);
-        let inf_solver = TransysSolver::new(&tsctx);
+        let inf_solver = TransysSolver::new_with(&tsctx, cfg.sat.clone());
         let lift = TsLift::new(TransysUnroll::new(&ts));
         let localabs = LocalAbs::new(&ts, &cfg);
         let mab = mab::CtxMab::new(cfg.mab_alpha, cfg.mab_lambda);

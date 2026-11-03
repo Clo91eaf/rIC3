@@ -53,7 +53,7 @@ impl DagCnfSolver {
             {
                 return None;
             }
-            if restarts > 10 && self.vsids.enable_bucket {
+            if restarts > self.cfg.bucket_restarts && self.vsids.enable_bucket {
                 self.vsids.enable_bucket = false;
                 self.vsids.heap.clear();
                 for d in self.domain.iter() {
@@ -63,7 +63,7 @@ impl DagCnfSolver {
                 }
             }
             let rest_base = luby(2.0, restarts);
-            match self.search(assumption, Some(rest_base * 100.0)) {
+            match self.search(assumption, Some(rest_base * self.cfg.restart_base)) {
                 None => {
                     restarts += 1;
                     if restarts % 10 == 0 {
@@ -104,8 +104,8 @@ impl DagCnfSolver {
                     let assign = self.cdb.get(learnt_id)[0];
                     self.assign(assign, learnt_id);
                 }
-                self.vsids.decay();
-                self.cdb.decay();
+                self.vsids.decay(self.cfg.var_decay);
+                self.cdb.decay(self.cfg.cls_decay);
             } else {
                 if let Some(noc) = noc
                     && num_conflict >= noc

@@ -256,6 +256,8 @@ pub struct ClauseDB {
     pub learnt: Gvec<CRef>,
     pub temporary: Gvec<CRef>,
     act_inc: f32,
+    /// Product of Config::learnt_grow over the reductions so far.
+    pub learnt_scale: f64,
 }
 
 impl ClauseDB {
@@ -302,11 +304,9 @@ impl ClauseDB {
         }
     }
 
-    const DECAY: f32 = 0.99;
-
     #[inline]
-    pub fn decay(&mut self) {
-        self.act_inc *= 1.0 / Self::DECAY
+    pub fn decay(&mut self, decay: f32) {
+        self.act_inc *= 1.0 / decay
     }
 
     #[inline]
@@ -331,6 +331,7 @@ impl Default for ClauseDB {
             learnt: Default::default(),
             temporary: Default::default(),
             act_inc: 1.0,
+            learnt_scale: 1.0,
         }
     }
 }
@@ -365,9 +366,10 @@ impl DagCnfSolver {
     }
 
     pub fn clean_learnt(&mut self, full: bool) {
-        if (full && self.cdb.learnt.len() * 15 > self.cdb.trans.len())
-            || self.cdb.learnt.len() > self.cdb.trans.len()
-        {
+        let cap =
+            (self.cdb.trans.len().max(self.cfg.learnt_min) as f64 * self.cdb.learnt_scale) as usize;
+        if (full && self.cdb.learnt.len() * 15 > cap) || self.cdb.learnt.len() > cap {
+            self.cdb.learnt_scale *= self.cfg.learnt_grow;
             let onum_learnt = self.cdb.num_learnt();
             self.cdb.learnt.sort_unstable_by(|a, b| {
                 self.cdb
@@ -381,7 +383,10 @@ impl DagCnfSolver {
             for i in 0..learnt.len() {
                 let l = learnt[i];
                 let cls = self.cdb.get(l);
-                if i > learnt.len() / 3 && !self.locked(l) && cls.len() > 2 {
+                if i as f64 > learnt.len() as f64 * self.cfg.learnt_keep
+                    && !self.locked(l)
+                    && cls.len() > 2
+                {
                     self.detach_clause(l);
                 } else {
                     self.cdb.learnt.push(l);

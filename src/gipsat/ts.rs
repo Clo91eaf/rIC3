@@ -15,7 +15,12 @@ pub struct TransysSolver {
 
 impl TransysSolver {
     pub fn new(ts: &Grc<TransysCtx>) -> Self {
+        Self::new_with(ts, super::Config::default())
+    }
+
+    pub fn new_with(ts: &Grc<TransysCtx>, cfg: super::Config) -> Self {
         let mut dcs = DagCnfSolver::new(&ts.rel);
+        dcs.cfg = cfg;
         for c in ts.constraint.iter() {
             dcs.add_clause(&[*c]);
         }
