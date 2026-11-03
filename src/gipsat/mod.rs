@@ -2,6 +2,7 @@ mod analyze;
 mod cdb;
 mod domain;
 mod eq;
+mod fallback;
 mod propagate;
 mod search;
 mod simplify;
@@ -60,6 +61,8 @@ pub struct DagCnfSolver {
     constraint: Vec<LitVec>,
 
     statistic: SolverStatistic,
+    /// Conflicts in the current solve call.
+    solve_conflicts: usize,
 }
 
 /// Tunable heuristics of gipsat. The defaults are the original constants.
@@ -98,6 +101,10 @@ pub struct Config {
     #[arg(long = "sat-cls-decay", default_value_t = 0.99)]
     pub cls_decay: f32,
 
+    /// gipsat: hand a query to CaDiCaL after this many conflicts (0: never)
+    #[arg(long = "sat-fallback", default_value_t = 0)]
+    pub fallback: usize,
+
     /// gipsat: decide and propagate only in the cone of the assumptions
     #[arg(long = "sat-domain", action = clap::ArgAction::Set, default_value_t = true)]
     pub domain: bool,
@@ -115,6 +122,7 @@ impl Default for Config {
             var_decay: 0.95,
             cls_decay: 0.99,
             domain: true,
+            fallback: 0,
         }
     }
 }
@@ -145,6 +153,7 @@ impl DagCnfSolver {
             assump: Default::default(),
             constraint: Default::default(),
             statistic: Default::default(),
+            solve_conflicts: 0,
             trivial_unsat: false,
             rng: SmallRng::seed_from_u64(0),
             cfg: Default::default(),
@@ -272,6 +281,7 @@ impl DagCnfSolver {
             return Some(false);
         }
         self.statistic.num_solve += 1;
+        self.solve_conflicts = 0;
         let start = Instant::now();
         let mut assumption;
         if self.propagate() != CREF_NONE {

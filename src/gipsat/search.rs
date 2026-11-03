@@ -62,6 +62,10 @@ impl DagCnfSolver {
                     }
                 }
             }
+            if limit.is_none() && self.cfg.fallback > 0 && self.solve_conflicts >= self.cfg.fallback
+            {
+                return self.fallback_cadical(assumption);
+            }
             let rest_base = luby(2.0, restarts);
             match self.search(assumption, Some(rest_base * self.cfg.restart_base)) {
                 None => {
@@ -84,6 +88,7 @@ impl DagCnfSolver {
             let conflict = self.propagate();
             if conflict != CREF_NONE {
                 num_conflict += 1.0;
+                self.solve_conflicts += 1;
                 if self.highest_level() == 0 {
                     self.unsat_core.clear();
                     return Some(false);

@@ -8,6 +8,9 @@ pub struct SolverStatistic {
     pub avg_decide_var: Average,
     pub num_simplify_subsume: usize,
     pub num_simplify_self_subsume: usize,
+    pub num_fallback: usize,
+    pub num_fallback_sat: usize,
+    pub fallback_time: std::time::Duration,
 }
 
 impl AddAssign for SolverStatistic {
@@ -17,5 +20,8 @@ impl AddAssign for SolverStatistic {
         self.avg_decide_var += rhs.avg_decide_var;
         self.num_simplify_subsume += rhs.num_simplify_subsume;
         self.num_simplify_self_subsume += rhs.num_simplify_self_subsume;
+        self.num_fallback += rhs.num_fallback;
+        self.num_fallback_sat += rhs.num_fallback_sat;
+        self.fallback_time += rhs.fallback_time;
     }
 }
