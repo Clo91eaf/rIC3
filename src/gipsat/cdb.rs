@@ -365,9 +365,11 @@ impl DagCnfSolver {
     }
 
     pub fn clean_learnt(&mut self, full: bool) {
-        if (full && self.cdb.learnt.len() * 15 > self.cdb.trans.len())
-            || self.cdb.learnt.len() > self.cdb.trans.len()
-        {
+        // The budget used to be the number of transition clauses, so a
+        // smaller CNF (after BVE or gate encoding) kept fewer learnt clauses
+        // and hard queries kept losing them. Keep at least 20000.
+        let cap = self.cdb.trans.len().max(20000);
+        if (full && self.cdb.learnt.len() * 15 > cap) || self.cdb.learnt.len() > cap {
             let onum_learnt = self.cdb.num_learnt();
             self.cdb.learnt.sort_unstable_by(|a, b| {
                 self.cdb
