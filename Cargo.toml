@@ -18,6 +18,7 @@ cadical = { package = "satif-cadical", path = "./deps/cadical-rs", version = "0.
 kissat = { package = "satif-kissat", path = "./deps/kissat-rs", version = "0.5.2" }
 bitwuzla = { package = "smtif-bitwuzla", path = "./deps/bitwuzla-rs", version = "0.1.0" }
 logicrs = { path = "./deps/logicrs", version = "0.6.1" }
+rbmc = { path = "./deps/rBMC", version = "0.1.0" }
 giputils = { path = "./deps/giputils", version = "0.3.6" }
 btor = { path = "./deps/btor-rs", version = "0.2.2" }
 clap = { version = "4.5.60", features = ["derive"] }
@@ -55,6 +56,15 @@ tokio = { version = "1.52.3", features = [
 ] }
 nalgebra = "0.35.0"
 memory-stats = "1.2.0"
+
+# rbmc takes these crates from crates.io; use the copies in deps/, so that
+# there is one of each.
+[patch.crates-io]
+logicrs = { path = "./deps/logicrs" }
+giputils = { path = "./deps/giputils" }
+satif-cadical = { path = "./deps/cadical-rs" }
+satif-kissat = { path = "./deps/kissat-rs" }
+aig = { path = "./deps/aig-rs" }
 
 [profile.release]
 lto = true

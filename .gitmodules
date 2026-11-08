@@ -22,3 +22,6 @@
 [submodule "examples/fvbench"]
 	path = examples/fvbench
 	url = https://github.com/gipsyh/fvbench.git
+[submodule "deps/rBMC"]
+	path = deps/rBMC
+	url = https://github.com/Clo91eaf/rBMC.git

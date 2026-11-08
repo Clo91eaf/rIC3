@@ -3,20 +3,13 @@ use crate::{
     config::{EngineConfig, EngineConfigBase, PreprocConfig},
     impl_config_deref,
     tracer::{ExtractorIf, Tracer, TracerIf},
-    transys::{Transys, TransysIf, certify::Restore, nodep::NoDepTransys, unroll::TransysUnroll},
-    utils::EngineCtrl,
+    transys::{Transys, certify::Restore, nodep::NoDepTransys},
 };
 use clap::{Args, Parser};
 use giputils::TerminateCtrl;
-use log::info;
-use logicrs::{LitVec, satif::Satif};
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use logicrs::LitVec;
 use serde::{Deserialize, Serialize};
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 #[derive(Args, Clone, Debug, Serialize, Deserialize)]
 pub struct BMCConfig {
@@ -49,175 +42,96 @@ impl Default for BMCConfig {
     }
 }
 
+/// BMC with rBMC (deps/rBMC) on the preprocessed model.
 pub struct BMC {
-    _ts: Box<NoDepTransys>,
-    uts: TransysUnroll<NoDepTransys>,
-    cfg: BMCConfig,
-    solver: Box<dyn Satif>,
-    solver_k: usize,
+    bmc: rbmc::Bmc,
     rst: Restore,
-    step: usize,
-    rng: StdRng,
     tracer: Tracer,
     extractor: Option<Box<dyn ExtractorIf>>,
-    invariant: Vec<LitVec>,
-    ctrl: Arc<BmcCtrl>,
-}
-
-struct BmcCtrl {
-    base: EngineCtrl,
-    solver: Mutex<Box<dyn TerminateCtrl>>,
-}
-
-impl TerminateCtrl for BmcCtrl {
-    fn terminate(&self) {
-        self.base.terminate();
-        self.solver.lock().unwrap().terminate();
-    }
-
-    fn is_terminated(&self) -> bool {
-        self.base.is_terminated()
-    }
 }
 
 impl BMC {
     pub fn new(cfg: BMCConfig, mut ts: Transys) -> Self {
         ts.compress_bads();
-        let mut rng = StdRng::seed_from_u64(cfg.rseed);
         let rst = Restore::new(&ts);
         let (ts, rst) = ts.preproc(&cfg.preproc, rst);
         let mut ts = ts.remove_dep();
         ts.assert_constraint();
-        // if cfg.preproc.preproc {
-        //     ts.simplify(&mut rst);
-        // }
-        let ts = Box::new(ts);
-        let uts = TransysUnroll::new(ts.deref());
-        let mut solver: Box<dyn Satif> = if cfg.kissat {
-            Box::new(kissat::Kissat::new())
-        } else {
-            Box::new(cadical::CaDiCaL::new())
-        };
-        solver.set_seed(rng.random());
-        let solver_ctrl = solver.get_terminate_ctrl();
-        ts.load_init(solver.as_mut());
-        let step = if cfg.dyn_step {
-            (10_000_000 / (*ts.max_var() as usize + ts.rel.clauses().len())).max(1)
-        } else {
-            cfg.step as usize
+        let bmc_cfg = rbmc::Config {
+            start: cfg.start,
+            end: cfg.end,
+            step: cfg.step as usize,
+            dyn_step: cfg.dyn_step,
+            time_limit: cfg.time_limit,
+            step_time_limit: cfg.step_time_limit,
+            kissat: cfg.kissat,
+            seed: cfg.rseed,
         };
         Self {
-            _ts: ts,
-            uts,
-            step,
-            cfg,
-            solver,
-            solver_k: 0,
+            bmc: rbmc::Bmc::new(bmc_cfg, to_model(ts)),
             rst,
-            rng,
             tracer: Tracer::new(),
             extractor: None,
-            invariant: Vec::new(),
-            ctrl: Arc::new(BmcCtrl {
-                base: EngineCtrl::new(),
-                solver: Mutex::new(solver_ctrl),
-            }),
         }
     }
+}
 
-    fn extract_invariant(&mut self) {
-        let Some(extractor) = self.extractor.as_mut() else {
-            return;
-        };
-        while let Some((k, lemma)) = extractor.extract_lemma() {
-            if k.is_none() {
-                for k in 0..=self.uts.num_unroll {
-                    let inv: LitVec = self.uts.lits_next(&lemma, k).collect();
-                    self.solver.add_clause(&inv);
-                }
-                self.invariant.push(lemma);
-            }
-        }
+/// The rBMC model of a preprocessed transition system, with the same
+/// variables.
+fn to_model(ts: NoDepTransys) -> rbmc::Model {
+    assert!(ts.bad.len() == 1, "bmc expects one bad literal");
+    assert!(ts.constraint.is_empty());
+    rbmc::Model {
+        input: ts.input,
+        latch: ts.latch,
+        next: ts.next,
+        init: ts.init,
+        bad: ts.bad[0],
+        constraint: LitVec::new(),
+        rel: ts.rel,
     }
+}
 
-    fn extend_slv_to(&mut self, k: usize) {
-        while self.solver_k < k + 1 {
-            self.uts
-                .load_trans(self.solver.as_mut(), self.solver_k, true);
-            for inv in self.invariant.iter() {
-                let inv: LitVec = self.uts.lits_next(inv, self.solver_k).collect();
-                self.solver.add_clause(&inv);
-            }
-            self.solver_k += 1;
-        }
-    }
+/// Passes the progress to the tracer and the invariants of the extractor
+/// (lemmas that hold in all frames) to rBMC.
+struct Hooks<'a> {
+    tracer: &'a mut Tracer,
+    extractor: &'a mut Option<Box<dyn ExtractorIf>>,
+}
 
-    fn reset_solver(&mut self) {
-        let mut solver_ctrl = self.ctrl.solver.lock().unwrap();
-        self.solver = if self.cfg.kissat {
-            Box::new(kissat::Kissat::new())
+impl rbmc::Hooks for Hooks<'_> {
+    fn bound_checked(&mut self, k: usize, sat: bool) {
+        let r = if sat {
+            McResult::SAT(k)
         } else {
-            Box::new(cadical::CaDiCaL::new())
+            McResult::Unknown(Some(k))
         };
-        self.solver.set_seed(self.rng.random());
-        *solver_ctrl = self.solver.get_terminate_ctrl();
-        self.uts.ts.load_init(self.solver.as_mut());
-        for i in 0..self.solver_k {
-            self.uts.load_trans(self.solver.as_mut(), i, true);
+        self.tracer.trace_state(None, r);
+    }
+
+    fn invariants(&mut self) -> Vec<LitVec> {
+        let mut invs = Vec::new();
+        if let Some(extractor) = self.extractor.as_mut() {
+            while let Some((k, lemma)) = extractor.extract_lemma() {
+                if k.is_none() {
+                    invs.push(lemma);
+                }
+            }
         }
+        invs
     }
 }
 
 impl Engine for BMC {
     fn check(&mut self) -> McResult {
-        let start = Instant::now();
-        for k in (self.cfg.start..=self.cfg.end).step_by(self.step) {
-            if self.ctrl.is_terminated() {
-                return McResult::Unknown(k.checked_sub(1));
-            }
-            let mut time_limit = self.cfg.step_time_limit;
-            if let Some(limit) = self.cfg.time_limit {
-                let time = start.elapsed().as_secs();
-                if start.elapsed().as_secs() >= limit {
-                    return McResult::Unknown(k.checked_sub(1));
-                }
-                let remain = limit - time;
-                time_limit = Some(time_limit.map_or(remain, |tl| tl.min(remain)));
-            }
-            self.extract_invariant();
-            self.uts.unroll_to(k);
-            self.extend_slv_to(k);
-            let mut assump: LitVec = self.uts.lits_next(&self.uts.ts.bad, k).collect();
-            if self.cfg.kissat {
-                for b in assump.iter() {
-                    self.solver.add_clause(&[*b]);
-                }
-                assump.clear();
-            }
-            let r = if let Some(limit) = time_limit {
-                self.solver
-                    .solve_with_limit(&assump, vec![], Duration::from_secs(limit))
-            } else {
-                self.solver.try_solve(&assump, vec![])
-            };
-            let Some(r) = r else {
-                if self.ctrl.is_terminated() {
-                    return McResult::Unknown(k.checked_sub(1));
-                }
-                continue;
-            };
-            if r {
-                self.tracer.trace_state(None, crate::McResult::SAT(k));
-                return McResult::SAT(k);
-            }
-            self.tracer
-                .trace_state(None, crate::McResult::Unknown(Some(k)));
-            if self.cfg.kissat {
-                self.reset_solver();
-            }
+        let mut hooks = Hooks {
+            tracer: &mut self.tracer,
+            extractor: &mut self.extractor,
+        };
+        match self.bmc.check(&mut hooks) {
+            rbmc::BmcResult::Sat(k) => McResult::SAT(k),
+            rbmc::BmcResult::Unknown(k) => McResult::Unknown(k),
         }
-        info!("bmc reached bound {}, stopping search", self.cfg.end);
-        McResult::Unknown(Some(self.cfg.end))
     }
 
     fn add_tracer(&mut self, tracer: Box<dyn TracerIf>) {
@@ -229,13 +143,18 @@ impl Engine for BMC {
     }
 
     fn get_ctrl(&self) -> Arc<dyn TerminateCtrl> {
-        self.ctrl.clone()
+        self.bmc.ctrl()
     }
 }
 
 impl BlEngine for BMC {
     fn cex(&mut self) -> BlCex {
-        let mut cex = self.uts.cex(self.solver.as_ref());
+        let c = self.bmc.cex();
+        let mut cex = BlCex {
+            input: c.input,
+            state: c.state,
+            ..Default::default()
+        };
         cex = cex.map(|l| self.rst.restore(l));
         for s in cex.state.iter_mut() {
             *s = self.rst.restore_eq_state(s);
