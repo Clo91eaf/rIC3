@@ -27,7 +27,13 @@ impl Activity {
 
     #[inline]
     fn bump(&mut self, var: Var) {
-        self.activity[var] += self.act_inc;
+        self.bump_by(var, 1.0);
+    }
+
+    /// Adds `amount` lemma bumps to the activity of `var`.
+    #[inline]
+    pub fn bump_by(&mut self, var: Var, amount: f64) {
+        self.activity[var] += amount * self.act_inc;
         self.max_act = self.max_act.max(self.activity[var]);
         if self.activity[var] > 1e100 {
             self.activity.iter_mut().for_each(|a| a.mul_assign(1e-100));

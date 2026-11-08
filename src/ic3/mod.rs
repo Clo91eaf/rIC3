@@ -115,6 +115,16 @@ pub struct IC3Config {
     #[arg(long = "pred-prop", default_value_t = false)]
     pub pred_prop: bool,
 
+    /// assumption core consistency (Zhu et al., Accelerating IC3 via
+    /// Generalization Refinements): after lifting, bump each variable of the
+    /// lifted cube by how far it moved up from the assumption order to the core
+    #[arg(long = "acc", default_value_t = false)]
+    pub acc: bool,
+
+    /// weight of the assumption core consistency bump, in units of one lemma bump
+    #[arg(long = "acc-weight", default_value_t = 1.0)]
+    pub acc_weight: f64,
+
     /// Local proof (internal parameter)
     #[arg(skip)]
     pub local_proof: bool,

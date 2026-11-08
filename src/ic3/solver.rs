@@ -1,5 +1,6 @@
 use super::IC3;
 use crate::transys::TransysIf;
+use giputils::hash::GHashSet;
 use log::trace;
 use logicrs::{Lit, LitOrdVec, LitVec, Var, satif::Satif};
 use rand::{RngExt, seq::SliceRandom};
@@ -128,7 +129,7 @@ impl IC3 {
         let mut cst = self.ts.constraint.clone();
         cls.retain(|l| self.localabs.refine_has(l.var()));
         cst.retain(|l| self.localabs.refine_has(l.var()));
-        let order = |mut i: usize, cube: &mut [Lit]| -> bool {
+        let mut order = |mut i: usize, cube: &mut [Lit]| -> bool {
             if self.cfg.inn || !self.auxiliary_var.is_empty() {
                 if i == 0 {
                     cube.sort_by(|a, b| {
@@ -156,9 +157,40 @@ impl IC3 {
             };
             true
         };
+        // The first assumption order, for assumption core consistency.
+        let acc = self.cfg.acc;
+        let mut first: Option<LitVec> = None;
+        let order = |i: usize, cube: &mut [Lit]| -> bool {
+            let r = order(i, cube);
+            if acc && i == 0 && r {
+                first = Some(LitVec::from(&*cube));
+            }
+            r
+        };
         let (state, input) = self.lift.lift(solver, cls.iter().chain(cst.iter()), order);
+        if let Some(first) = first {
+            self.bump_core_consistency(&first, &state);
+        }
         self.statistic.block.get_pred_time += start.elapsed();
         (state, input)
+    }
+
+    /// Assumption core consistency: a literal at position `o` of the
+    /// assumption order `first` and at position `i` of the lifted cube (in the
+    /// same order, as the lifted cube is a subset of `first`) was ranked
+    /// `o - i` places too low; its variable gets `o - i` bumps.
+    fn bump_core_consistency(&mut self, first: &[Lit], lifted: &[Lit]) {
+        let lifted: GHashSet<Lit> = GHashSet::from_iter(lifted.iter().copied());
+        let mut i = 0;
+        for (o, l) in first.iter().enumerate() {
+            if lifted.contains(l) {
+                if o > i {
+                    self.activity
+                        .bump_by(l.var(), (o - i) as f64 * self.cfg.acc_weight);
+                }
+                i += 1;
+            }
+        }
     }
 
     pub(super) fn get_full_pred(&mut self, frame: usize) -> (LitVec, Vec<LitVec>) {
