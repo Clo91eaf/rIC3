@@ -129,13 +129,14 @@ impl IC3 {
         let mut cst = self.ts.constraint.clone();
         cls.retain(|l| self.localabs.refine_has(l.var()));
         cst.retain(|l| self.localabs.refine_has(l.var()));
+        let activity = self.lift_activity.as_ref().unwrap_or(&self.activity);
         let mut order = |mut i: usize, cube: &mut [Lit]| -> bool {
             if self.cfg.inn || !self.auxiliary_var.is_empty() {
                 if i == 0 {
                     cube.sort_by(|a, b| {
                         self.ts_top_lv[b]
                             .cmp(&self.ts_top_lv[a])
-                            .then_with(|| self.activity.cmp(b, a))
+                            .then_with(|| activity.cmp(b, a))
                     });
                     return true;
                 }
@@ -143,7 +144,7 @@ impl IC3 {
             }
             match i {
                 0 => {
-                    self.activity.sort_by_activity(cube, false);
+                    activity.sort_by_activity(cube, false);
                 }
                 1 => {
                     if !strengthen {
@@ -185,8 +186,11 @@ impl IC3 {
         for (o, l) in first.iter().enumerate() {
             if lifted.contains(l) {
                 if o > i {
-                    self.activity
-                        .bump_by(l.var(), (o - i) as f64 * self.cfg.acc_weight);
+                    let weight = (o - i) as f64 * self.cfg.acc_weight;
+                    self.lift_activity
+                        .as_mut()
+                        .unwrap_or(&mut self.activity)
+                        .bump_by(l.var(), weight);
                 }
                 i += 1;
             }

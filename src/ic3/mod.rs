@@ -125,6 +125,12 @@ pub struct IC3Config {
     #[arg(long = "acc-weight", default_value_t = 1.0)]
     pub acc_weight: f64,
 
+    /// keep assumption core consistency to the order of lifting: lifting uses
+    /// its own activity (lemma bumps plus acc bumps), the other orders (blocking,
+    /// mic) keep the lemma activity
+    #[arg(long = "acc-lift-only", default_value_t = false, requires = "acc")]
+    pub acc_lift_only: bool,
+
     /// Local proof (internal parameter)
     #[arg(skip)]
     pub local_proof: bool,
@@ -190,6 +196,8 @@ pub struct IC3 {
     frame: Frames,
     obligations: ProofObligationQueue,
     activity: Activity,
+    /// Activity for the order of lifting, with --acc-lift-only.
+    lift_activity: Option<Activity>,
     statistic: Statistic,
     localabs: LocalAbs,
     ots: Transys,
@@ -302,6 +310,7 @@ impl IC3 {
         };
         let tsctx = Grc::new(ts.ctx());
         let activity = Activity::new(&tsctx);
+        let lift_activity = cfg.acc_lift_only.then(|| Activity::new(&tsctx));
         let frame = Frames::new(&tsctx);
         let inf_solver = TransysSolver::new(&tsctx);
         let lift = TsLift::new(TransysUnroll::new(&ts));
@@ -313,6 +322,7 @@ impl IC3 {
             symbols,
             tsctx,
             activity,
+            lift_activity,
             solvers: Vec::new(),
             inf_solver,
             lift,

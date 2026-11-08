@@ -272,6 +272,9 @@ impl IC3 {
             self.solvers[frame - 1].unset_domain();
         }
         self.activity.bump_cube_activity(&cube);
+        if let Some(a) = self.lift_activity.as_mut() {
+            a.bump_cube_activity(&cube);
+        }
         self.statistic.block.mic_time += start.elapsed();
         cube
     }
